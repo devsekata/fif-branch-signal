@@ -4,16 +4,44 @@ Next.js dashboard for FIF branch complaints, escalations, review integrity and I
 
 ## Run
 
+### Local (Node.js)
+
 ```bash
 npm install
 npm run dev      # http://localhost:3000
 npm run build && npm start
 ```
 
-The API base URL defaults to `https://api-fif.kepiai.co`. To point at another environment, set it in `.env.local`:
+### Docker
 
+The app is containerized using a multi-stage Docker build and runs Next.js in standalone mode.
+
+```bash
+# Start with Docker Compose (accessible on host port 3011)
+docker compose up -d
+
+# Check logs
+docker compose logs -f
 ```
-NEXT_PUBLIC_API_BASE_URL=https://api-fif.kepiai.co
+
+The app is accessible on the host at `http://localhost:3011`.
+
+#### Environment Configuration (.env)
+
+The API base URL defaults to `https://api-fif.kepiai.co`. To configure it, edit `.env`:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
+```
+
+The host `.env` file is mounted into the container at runtime. Whenever you change `.env` on the host, simply recreate or restart the container to apply the new settings without rebuilding the Docker image:
+
+```bash
+# Recreate the container
+docker compose up -d --force-recreate
+
+# Or simply restart the container
+docker compose restart
 ```
 
 ## Layout
