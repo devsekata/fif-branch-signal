@@ -22,6 +22,11 @@ interface Row {
   who: string;
   meta: string;
   url: string | null;
+  severity: number;
+  sentiment: string;
+  answered: boolean;
+  /** "severity 60 · rating 20 · recency 14.3", for the score cell's tooltip. */
+  breakdown: string;
 }
 
 type QueueKey = keyof Row & string;
@@ -31,8 +36,9 @@ type QueueFilter = 'all' | 'critical' | 'high' | 'medium';
 const LIMIT = 200;
 
 const COLS: Col<QueueKey>[] = [
-  ['priority', 'Priority', false], ['score', 'Score', true], ['source', 'Source', false], ['date', 'Posted', false],
-  ['age', 'Age', true], ['text', 'Case and topics', false], ['who', 'Author', false],
+  ['priority', 'Priority', false], ['score', 'Score', true], ['severity', 'Sev', true], ['source', 'Source', false],
+  ['date', 'Posted', false], ['age', 'Age', true], ['answered', 'Reply', false],
+  ['text', 'Case and topics', false], ['who', 'Author', false],
 ];
 
 const CHIPS: [QueueFilter, string][] = [['all', 'Everything'], ['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium']];
@@ -40,10 +46,16 @@ const CHIPS: [QueueFilter, string][] = [['all', 'Everything'], ['critical', 'Cri
 function toRow(c: CaseItem): Row {
   const a = c.author;
   const meta = [a.lifetime_reviews != null ? `${a.lifetime_reviews} reviews` : null, a.local_guide ? 'Local Guide' : null].filter(Boolean).join(', ');
+  const breakdown = Object.entries(c.score_components ?? {})
+    .filter(([, v]) => v)
+    .sort((x, y) => y[1] - x[1])
+    .map(([k, v]) => `${k} ${v}`)
+    .join(' · ');
   return {
     id: c.case_id, priority: c.priority, score: c.criticality ?? 0, source: c.source,
     where: c.channel_ref.branch ?? 'Official account', stars: c.stars, date: c.posted_at, age: c.age_days,
     text: c.text, topics: c.topic_ids, who: a.display ?? '—', meta, url: c.permalink,
+    severity: c.severity, sentiment: c.sentiment, answered: c.brand_replied, breakdown,
   };
 }
 
@@ -74,6 +86,10 @@ export function EscalationsView() {
                 Showing the {all.length} most critical of {d.page.total} cases.
               </div>
             )}
+            <div className="p-note" style={{ marginBottom: 6 }}>
+              Workflow status across every case in this view:{' '}
+              {Object.entries(d.facets.by_status).map(([s, n], i) => <span key={s}>{i > 0 && ' · '}<b>{n}</b> {s}</span>)}.
+            </div>
             <div className="p-note" style={{ marginBottom: 12 }}>Criticality runs 0–100: topic severity weighted fifteen-fold, then rating severity, recency, reviewer reach (Local Guide status, lifetime review count, attached photo) and an unanswered penalty. Weights are configurable and need CX and compliance sign-off before this goes live.</div>
             <div className="t-scroll">
               <table>
@@ -82,21 +98,29 @@ export function EscalationsView() {
                   {q.length ? q.map((c) => (
                     <tr key={c.id}>
                       <td><Chip priority={c.priority} /></td>
-                      <td className="n"><b>{c.score}</b></td>
+                      <td className="n" title={c.breakdown || undefined}>
+                        <b>{c.score}</b>
+                        {c.breakdown && <div className="sub" style={{ whiteSpace: 'nowrap' }}>{c.breakdown}</div>}
+                      </td>
+                      <td className="n"><span className={`tag s${c.severity}`}>{c.severity}</span></td>
                       <td>
                         <SourceBadge source={c.source} />
                         <div className="sub">{c.where}{c.stars ? <><br /><Rating stars={c.stars} /></> : null}</div>
                       </td>
                       <td className="mono">{c.date}</td>
                       <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>{c.age}d</td>
+                      <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
                       <td>
                         <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>{c.text ? c.text.slice(0, 420) : <NoText />}</div>
-                        <div style={{ marginTop: 6 }}><Tags topics={c.topics} /></div>
+                        <div style={{ marginTop: 6 }}>
+                          <Tags topics={c.topics} />
+                          {c.sentiment && <span className="sub" style={{ marginLeft: 6 }}>{c.sentiment}</span>}
+                        </div>
                       </td>
                       <td>{c.who}{c.meta && <div className="sub">{c.meta}</div>}</td>
                       <td>{c.url && <a className="link" href={c.url} target="_blank" rel="noopener">Open</a>}</td>
                     </tr>
-                  )) : <EmptyRow colSpan={8}>No cases match this filter.</EmptyRow>}
+                  )) : <EmptyRow colSpan={COLS.length + 1}>No cases match this filter.</EmptyRow>}
                 </tbody>
               </table>
             </div>

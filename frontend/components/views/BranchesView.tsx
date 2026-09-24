@@ -12,8 +12,9 @@ type BranchKey = keyof BranchRow & string;
 
 const COLS: Col<BranchKey>[] = [
   ['branch', 'Branch', false], ['reviews_read', 'Read', true], ['coverage_pct', 'Coverage', true], ['avg_rating', 'Rating', true],
-  ['complaint_rate_pct', 'Complaint rate', true], ['critical_high', 'Critical + high', true], ['conduct_flags', 'Conduct flags', true],
-  ['oldest_open_days', 'Oldest open', true], ['rating_only_pct', 'Rating only', true], ['new_account_pct', 'New accounts', true], ['risk_score', 'Risk', true],
+  ['google_public_score', 'Public score', true], ['complaint_rate_pct', 'Complaint rate', true], ['critical_high', 'Critical + high', true],
+  ['conduct_flags', 'Conduct flags', true], ['owner_reply_rate_pct', 'Owner replies', true], ['oldest_open_days', 'Oldest open', true],
+  ['rating_only_pct', 'Rating only', true], ['new_account_pct', 'New accounts', true], ['risk_score', 'Risk', true],
 ];
 
 const alarm = (on: boolean | number) => (on ? { color: T.sig, fontWeight: 600 } : undefined);
@@ -30,7 +31,7 @@ export function BranchesView() {
             <BranchMetrics d={d} />
             <div className="panel mb">
               <PanelHead title="Branch league table" tag="click a column to sort" />
-              <div className="p-note" style={{ color: '#8E5310' }}>This page reads Google reviews only. Instagram comments carry no branch, so the source filter does not apply here.</div>
+              <div className="p-note" style={{ color: '#8E5310' }}>Instagram comments carry no branch, which is why the source filter does not apply here.</div>
               <div className="p-note">
                 Coverage is the share of that branch&apos;s real Google review count captured in this scrape.{' '}
                 {cov.length > 1 && Math.min(...cov) !== Math.max(...cov) ? `Because it ranges from ${Math.min(...cov)}% to ${Math.max(...cov)}%, compare` : 'Compare'} branches on rates, never on counts.
@@ -86,9 +87,11 @@ function BranchTable({ rows }: { rows: BranchRow[] }) {
                 <td className="n">{r.reviews_read}<div className="sub">of {r.reviews_universe}</div></td>
                 <td className="n">{r.coverage_pct}%</td>
                 <td className="n" style={alarm(r.avg_rating !== null && r.avg_rating < 4)}>{r.avg_rating?.toFixed(2) ?? '—'}</td>
+                <td className="n" title="The star average Google shows the public, before this scrape's sampling">{r.google_public_score?.toFixed(1) ?? '—'}</td>
                 <td className="n" style={alarm(r.complaint_rate_pct > 15)}>{r.complaint_rate_pct}%</td>
                 <td className="n">{r.critical_high}</td>
                 <td className="n" style={alarm(r.conduct_flags)}>{r.conduct_flags || '—'}</td>
+                <td className="n" style={alarm(r.owner_reply_rate_pct < 50)}>{r.owner_reply_rate_pct}%</td>
                 <td className="n">{r.oldest_open_days}d</td>
                 <td className="n">{r.rating_only_pct}%</td>
                 <td className="n">{r.new_account_pct}%</td>

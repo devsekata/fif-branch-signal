@@ -88,6 +88,12 @@ export interface OverviewResponse {
     never_answered: number;
     complaint_rate_pct: number;
     oldest_unanswered_days: number;
+    /* Added by the API on 24 Sep 2026, still absent from the spec, so these stay optional.
+     * complaints and complaint_count carry the same number; complaints is the newer name.
+     * never_answered_by_source is also flattened into never_answered_google / _instagram, which we do not read. */
+    complaints?: number;
+    complaint_count?: number;
+    never_answered_by_source?: Partial<Record<Channel, number>>;
   };
   oldest_unanswered: { case_id: string; source: Channel; label: string; stars: number | null; excerpt: string; age_days: number }[];
   trend_monthly: { month: string; reviews: number; avg_rating: number | null; google_complaints: number; instagram_complaints: number }[];
@@ -246,6 +252,8 @@ export interface CaseItem {
   severity: number;
   sentiment: string;
   criticality: number | null;
+  /** How criticality was reached. Sent by the API but not described in the spec. */
+  score_components?: Partial<Record<'severity' | 'rating' | 'recency' | 'reach' | 'unanswered', number>>;
   priority: Priority;
   author: { display: string | null; lifetime_reviews: number | null; local_guide: boolean | null; has_photo: boolean | null };
   brand_replied: boolean;

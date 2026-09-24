@@ -50,7 +50,7 @@ function GoogleSummary({ g }: { g: IntegrityResponse['google'] }) {
       <div className="panel mb" style={{ borderColor: '#EFD7D4' }}>
         <PanelHead title="The public score is a collection artefact" />
         <p className="p-note" style={{ marginBottom: 0 }}>
-          In this view, {g.five_star_pct.toFixed(0)}% of reviews are five stars,{' '}
+          In this view, {g.five_star_pct.toFixed(0)}% of reviews are five stars against {g.one_star_pct.toFixed(0)}% at one star,{' '}
           {g.no_text_pct.toFixed(0)}% carry no text at all, {g.first_time_account_pct.toFixed(0)}% come from accounts holding one review or fewer in their lifetime,{' '}
           and {Math.round(g.office_hours_pct)}% were posted inside branch operating hours.{' '}
           {big ? `${big.branch} collected ${big.n} reviews on ${big.date} alone, ${big.notext} of them wordless. ` : ''}
@@ -58,12 +58,29 @@ function GoogleSummary({ g }: { g: IntegrityResponse['google'] }) {
         </p>
       </div>
       <div className="grid g-4 mb">
-        <Metric k="Five-star share" v={g.five_star_pct.toFixed(0) + '%'} n="of reviews in this view" />
+        <Metric k="Five-star share" v={g.five_star_pct.toFixed(0) + '%'} n={`against ${g.one_star_pct.toFixed(0)}% at one star`} />
         <Metric k="No text" v={g.no_text_pct.toFixed(0) + '%'} n="a tap, not a review" />
         <Metric k="One-review accounts" v={g.first_time_account_pct.toFixed(0) + '%'} n="created or used once" />
         <Metric k="Repeat reviewers found" v={g.repeat_reviewers} n="Google permits one review per account per place" />
       </div>
+      <Flags
+        label="What the integrity scan flagged on Google"
+        items={[['Spam', g.spam_count], ['Duplicate text', g.duplicate_count], ['Suspicious accounts', g.suspicious_accounts], ['Reviews flagged', g.flagged_reviews.length]]}
+      />
     </>
+  );
+}
+
+/** Counters the API returns whether or not anything was found; a row of zeroes is the useful answer. */
+function Flags({ label, items }: { label: string; items: [string, number][] }) {
+  const hits = items.filter(([, n]) => n > 0);
+  return (
+    <div className="p-note mb">
+      <b>{label}:</b>{' '}
+      {hits.length
+        ? items.map(([k, n], i) => <span key={k}>{i > 0 && ' · '}{k} <b style={{ color: n > 0 ? T.sig : undefined }}>{n}</b></span>)
+        : `nothing on any of ${items.length} checks (${items.map(([k]) => k.toLowerCase()).join(', ')}).`}
+    </div>
   );
 }
 
@@ -129,6 +146,10 @@ function InstagramIntegrity({ ig }: { ig: IntegrityResponse['instagram'] }) {
         <Metric k="Reaction-only comments" v={ig.reaction_only_comments} n="emoji with no words, the social echo of a bare star" />
         <Metric k="Threads read" v={ig.threads_read} n={posts != null ? `from ${posts} ${plural(posts, 'post', 'posts')}` : 'on the official account'} />
       </div>
+      <Flags
+        label="What the integrity scan flagged on Instagram"
+        items={[['Spam', ig.spam_count], ['Duplicate comments', ig.duplicate_count], ['Suspicious accounts', ig.suspicious_accounts]]}
+      />
       {dup.length ? (
         <table>
           <thead>

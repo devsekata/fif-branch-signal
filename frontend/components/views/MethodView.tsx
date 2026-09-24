@@ -29,19 +29,43 @@ function scoringModel(s: ConfigResponse['scoring']['google']) {
   return [
     ['Topic severity', `0–${4 * s.severity_x}`, 'Conduct and regulatory topics carry the most weight'],
     ['Rating severity', `0–${Math.max(...Object.values(s.rating))}`, 'One star outranks three'],
-    ['Recency', `0–${s.recency_max}`, 'A complaint from last week beats one from last year'],
-    ['Reviewer reach', `0–${reach}`, 'Local Guide status, lifetime review count, attached photo'],
+    ['Recency', `0–${s.recency_max}`, `A complaint from last week beats one from last year; decays ${s.recency_decay_per_30d} per 30 days`],
+    ['Reviewer reach', `0–${reach}`, `Local Guide ${s.reach.local_guide}, photo ${s.reach.photo}, lifetime reviews ÷ ${s.reach.lifetime_reviews_div} capped at ${s.reach.lifetime_reviews_max}`],
     ['No public reply', String(s.unanswered), 'Every unanswered case gains a fixed penalty'],
   ];
 }
 
+/** Instagram is scored on its own dimensions; the API sends them as a flat record, so label what we recognise. */
+const IG_SCORE_LABEL: Record<string, string> = {
+  severity_x: 'Topic severity multiplier',
+  negative: 'Negative sentiment',
+  recency_max: 'Recency ceiling',
+  recency_decay_per_day: 'Recency decay per day',
+  reach_max: 'Reach ceiling',
+  thread_heat_per_reply: 'Thread heat per reply',
+  thread_heat_max: 'Thread heat ceiling',
+  pile_on: 'Pile-on',
+  unanswered: 'No brand reply',
+  answered_no_followup_multiplier: 'Answered but no follow-up (multiplier)',
+};
+
 export function MethodView() {
-  const { config, source } = useReference();
+  const { config, meta, source } = useReference();
   const google = source('google'), ig = source('instagram');
   const topics = useApi<ComplaintsResponse>('/v1/pages/complaints', { source: 'all' }).data?.topics;
   const social = useApi<SocialResponse>('/v1/pages/social', { source: 'all' }).data?.summary;
   const found = (sev: number) => topics?.filter((t) => t.severity === sev).reduce((a, t) => a + t.google + t.instagram, 0);
   const covers = (level: number) => config?.severity_ladder.find((s) => s.level === level)?.description ?? COVERS[level];
+
+  /** What the taxonomy carries at a level, as opposed to what was actually found in the data. */
+  const taxonomy = (level: number) => {
+    const at = (config?.topics ?? []).filter((t) => t.severity === level);
+    return {
+      topics: at.length,
+      keywords: at.reduce((a, t) => a + (t.keyword_count ?? 0), 0),
+      names: at.map((t) => `${t.label} (${t.channels.join(', ')})`).join('\n'),
+    };
+  };
 
   const limits = [
     [ig?.posts != null ? `${ig.posts} ${plural(ig.posts, 'post', 'posts')} in the scrape` : 'Posts in the scrape', 'No post-level comparison and no reliable trend. A multi-post pull is the next step.'],
@@ -69,16 +93,31 @@ export function MethodView() {
             <p>Every review in this file comes from a distinct reviewer ID, because Google lets one account hold only one review per place and edits it instead of adding a second. Recurrence is therefore measured by topic per branch, by collection-day bursts, and by reviewer reach — not by counting a person twice.</p>
           </div>
           <div className="callout">
-            <h4>Reply metrics are unverified</h4>
-            <p>The owner-response fields are empty on every row. Either no branch has ever replied, which is the cheapest win available, or the scraper did not capture the field. This has to be checked against the Google Business Profile account before the number goes in front of the client.</p>
+            <h4>Reply speed cannot be measured yet</h4>
+            <p>Owner replies now come through, so a reply rate per branch is available, but no case carries a first-response time. How long a branch takes to answer is therefore still unknown, and the rate itself has to be checked against the Google Business Profile account before it goes in front of the client.</p>
           </div>
           <div className="callout">
             <h4>Reviewer names are personal data</h4>
             <p>Names shown in the queue are public, but under UU PDP the production build should pseudonymise them and keep the identity join in a restricted table.</p>
           </div>
+          {config?.known_limits?.length ? (
+            <div className="callout">
+              <h4>Limits the API declares about itself</h4>
+              <ul className="clean" style={{ marginTop: 6 }}>
+                {config.known_limits.map((l) => (
+                  <li key={l.id}>
+                    <span>
+                      {l.text}
+                      <div className="sub">{l.id} · applies to {l.applies_to.join(', ')}</div>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
         <div className="panel">
-          <PanelHead title="Scoring model" />
+          <PanelHead title="Scoring model" tag="Google" />
           <div className="p-note">Every complaint carries one score so that triage does not depend on who reads it first.</div>
           <table>
             <thead><tr><th>Component</th><th className="n">Weight</th><th>Reads</th></tr></thead>
@@ -89,17 +128,53 @@ export function MethodView() {
             </tbody>
           </table>
 
+          {config && (
+            <>
+              <div className="p-head" style={{ marginTop: 22 }}><h3>Instagram scoring</h3></div>
+              <div className="p-note">Social has no rating and no branch, so it is scored on sentiment, thread heat and pile-on instead.</div>
+              <table>
+                <thead><tr><th>Component</th><th className="n">Weight</th></tr></thead>
+                <tbody>
+                  {Object.entries(config.scoring.instagram).map(([k, v]) => (
+                    <tr key={k}><td><b>{IG_SCORE_LABEL[k] ?? k}</b></td><td className="n mono">{v}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="p-head" style={{ marginTop: 22 }}><h3>Priority thresholds</h3></div>
+              <div className="p-note">Where each score turns into the chip shown on the queue.</div>
+              <table>
+                <thead><tr><th>Channel</th><th className="n">Critical</th><th className="n">High</th><th className="n">Medium</th></tr></thead>
+                <tbody>
+                  {Object.entries(config.priority_thresholds).map(([ch, t]) => (
+                    <tr key={ch}>
+                      <td><b style={{ textTransform: 'capitalize' }}>{ch}</b></td>
+                      <td className="n mono">≥ {t.critical}</td>
+                      <td className="n mono">≥ {t.high}</td>
+                      <td className="n mono">≥ {t.medium}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
           <div className="p-head" style={{ marginTop: 22 }}><h3>Severity ladder</h3></div>
           <table>
-            <thead><tr><th className="n">Level</th><th>Covers</th><th className="n">Found</th></tr></thead>
+            <thead><tr><th className="n">Level</th><th>Covers</th><th className="n">Topics</th><th className="n">Keywords</th><th className="n">Found</th></tr></thead>
             <tbody>
-              {[4, 3, 2, 1].map((level) => (
-                <tr key={level}>
-                  <td className="n"><span className={`tag s${level}`}>{level}</span></td>
-                  <td style={{ color: 'var(--ink-2)' }}>{covers(level)}</td>
-                  <td className="n mono">{found(level) || '—'}</td>
-                </tr>
-              ))}
+              {[4, 3, 2, 1].map((level) => {
+                const t = taxonomy(level);
+                return (
+                  <tr key={level}>
+                    <td className="n"><span className={`tag s${level}`}>{level}</span></td>
+                    <td style={{ color: 'var(--ink-2)' }}>{covers(level)}</td>
+                    <td className="n mono" title={t.names}>{t.topics || '—'}</td>
+                    <td className="n mono">{t.keywords || '—'}</td>
+                    <td className="n mono">{found(level) || '—'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
@@ -124,6 +199,14 @@ export function MethodView() {
             </li>
           ))}
         </ul>
+        {meta && (
+          <div className="p-note" style={{ marginTop: 18, marginBottom: 0 }}>
+            Taxonomy {meta.versions.taxonomy} · scoring {meta.versions.scoring} · classifier {meta.versions.classifier}.{' '}
+            Data as of {meta.as_of.slice(0, 16).replace('T', ' ')} UTC, generated {meta.generated_at.slice(0, 16).replace('T', ' ')} UTC
+            {meta.date_bounds ? `, covering ${meta.date_bounds.min} to ${meta.date_bounds.max}` : ''}.{' '}
+            {meta.sources.map((s) => `${s.label}: ${s.rows} rows, ${s.status}`).join(' · ')}.
+          </div>
+        )}
       </div>
     </section>
   );

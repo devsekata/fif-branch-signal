@@ -40,7 +40,7 @@ export function SocialView() {
           <>
             <div className="grid g-4 mb">
               <Metric k="Threads" v={S.threads} n={`${S.root_comments} comments, ${S.replies_captured} replies read`} />
-              <Metric k="Complaint threads" v={S.complaint_threads} n={`${S.conduct_level} at conduct and regulatory level`} />
+              <Metric k="Complaint threads" v={S.complaint_threads} n={`${S.conduct_level} at conduct level · ${S.pile_ons} ${plural(S.pile_ons, 'pile-on', 'pile-ons')}`} />
               <Metric k="Answered by the brand" v={S.brand_reply_rate_pct + '%'} n={`${S.unanswered} complaints never got a public reply`} />
               <Metric k="Median first response" v={S.median_first_response_h != null ? S.median_first_response_h + 'h' : '—'}
                 n={S.max_first_response_h != null ? `slowest answer took ${Math.round(S.max_first_response_h / 24)} days` : 'no brand answers yet'} />

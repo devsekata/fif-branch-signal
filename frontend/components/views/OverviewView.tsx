@@ -55,6 +55,11 @@ function Hero({ scope, h }: { scope: Scope; h: OverviewResponse['headline'] }) {
   const { open_cases: total, items_read: items, conduct_level: reg, never_answered: unanswered, oldest_unanswered_days: oldest } = h;
   const nBranches = meta?.branches.length ?? 0;
   const { src, branch } = scope;
+  const complaints = h.complaints ?? h.complaint_count;
+  const unit = src === 'instagram' ? 'threads' : 'items';
+  /* Only worth splitting out while both channels are in view; on a single-source page the total already says it. */
+  const igUnanswered = src === 'all' ? h.never_answered_by_source?.instagram : undefined;
+  const igNote = igUnanswered ? `includes ${igUnanswered} on Instagram` : '';
   const where = src === 'instagram' ? 'on the official Instagram account'
     : branch !== 'all' ? 'at ' + branchName(branch)
     : src === 'google' ? `across ${nBranches} ${plural(nBranches, 'branch', 'branches')}`
@@ -70,7 +75,7 @@ function Hero({ scope, h }: { scope: Scope; h: OverviewResponse['headline'] }) {
             {reg
               ? `${reg} of which ${plural(reg, 'describes', 'describe')} collection conduct, misappropriation or exposed personal data. `
               : 'none at the conduct level. '}
-            {unanswered} {plural(unanswered, 'has', 'have')} never had a public reply.
+            {unanswered} {plural(unanswered, 'has', 'have')} never had a public reply{igUnanswered ? `, ${igUnanswered} of them on Instagram` : ''}.
           </>
         ) : 'No open cases in this view.'}
       </div>
@@ -86,9 +91,9 @@ function Hero({ scope, h }: { scope: Scope; h: OverviewResponse['headline'] }) {
       </div>
       <div className="stat-rail">
         <Stat k="Complaint rate" v={h.complaint_rate_pct.toFixed(1) + '%'}
-          n={`of ${items} ${src === 'instagram' ? 'threads' : 'items'} read`} bad={h.complaint_rate_pct > 12} />
+          n={`${complaints === undefined ? '' : complaints + ' '}of ${items} ${unit} read`} bad={h.complaint_rate_pct > 12} />
         <Stat k="Conduct-level cases" v={reg} n="collection, misappropriation, personal data" bad={reg > 0} />
-        <Stat k="Never answered" v={unanswered} n="no public reply on record" bad={unanswered > 0} />
+        <Stat k="Never answered" v={unanswered} n={igNote || 'no public reply on record'} bad={unanswered > 0} />
         <Stat k="Oldest unanswered" v={oldest + ' days'} n="still public, still open" bad={oldest > 180} />
       </div>
     </div>

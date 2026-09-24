@@ -101,6 +101,12 @@ export function EmptyRow({ colSpan, children }: { colSpan: number; children: Rea
   );
 }
 
+/** Warnings the API attaches to a payload, e.g. "branches endpoint is Google-only regardless of source filter". */
+function apiWarnings(data: unknown): string[] {
+  const w = (data as { context?: { warnings?: unknown } } | null | undefined)?.context?.warnings;
+  return Array.isArray(w) ? w.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+}
+
 /** Loading and error states for a page payload. While a refetch runs the previous data stays, dimmed. */
 export function ApiPage<T>({ res, children }: { res: ApiResult<T>; children: (data: T) => ReactNode }) {
   if (res.error) {
@@ -121,5 +127,17 @@ export function ApiPage<T>({ res, children }: { res: ApiResult<T>; children: (da
       </section>
     );
   }
-  return <section className={res.loading ? 'page busy' : 'page'} aria-busy={res.loading}>{children(res.data)}</section>;
+  const warnings = apiWarnings(res.data);
+  return (
+    <section className={res.loading ? 'page busy' : 'page'} aria-busy={res.loading}>
+      {warnings.length > 0 && (
+        <div className="panel mb" style={{ borderColor: '#E7D2AE' }}>
+          <div className="p-note" style={{ marginBottom: 0, color: '#8E5310' }}>
+            {warnings.map((w, i) => <div key={w}>{i > 0 && <br />}Reported by the API: {w}</div>)}
+          </div>
+        </div>
+      )}
+      {children(res.data)}
+    </section>
+  );
 }

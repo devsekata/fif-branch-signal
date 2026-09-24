@@ -130,6 +130,13 @@ function Heatmap({ d }: { d: ComplaintsResponse }) {
   );
 }
 
+/** Wording per `topics[].channel_presence`; the API decides the label, we only explain it. */
+const PRESENCE: Record<string, { label: string; note: string }> = {
+  google_only: { label: 'Google only', note: 'Lives at the counter. Nobody posts it on the brand feed.' },
+  instagram_only: { label: 'Instagram only', note: 'Never appears in a branch review — this is only visible because someone reads the feed.' },
+  both: { label: 'Both channels', note: 'Raised in both places, so it is a process issue rather than a channel quirk.' },
+};
+
 function Exclusive({ rows }: { rows: ComplaintTopic[] }) {
   return (
     <div className="panel mb">
@@ -137,21 +144,21 @@ function Exclusive({ rows }: { rows: ComplaintTopic[] }) {
       <div className="p-note">Same ladder, two very different mixes. A topic that only appears on one channel is not absent from the other — it is invisible to it, and that is a monitoring gap rather than a good result.</div>
       <table>
         <thead>
-          <tr><th>Topic</th><th className="n">Google</th><th className="n">Instagram</th><th>Reads as</th></tr>
+          <tr><th>Topic</th><th className="n">Google</th><th className="n">Instagram</th><th className="n">Answered</th><th>Reads as</th></tr>
         </thead>
         <tbody>
           {rows.map((r) => {
-            const only = r.google && !r.instagram ? 'Google only' : !r.google && r.instagram ? 'Instagram only' : 'Both channels';
-            const note = only === 'Instagram only'
-              ? 'Never appears in a branch review — this is only visible because someone reads the feed.'
-              : only === 'Google only'
-                ? 'Lives at the counter. Nobody posts it on the brand feed.'
-                : 'Raised in both places, so it is a process issue rather than a channel quirk.';
+            const total = r.google + r.instagram;
+            const { label: only, note } = PRESENCE[r.channel_presence] ?? PRESENCE.both;
             return (
               <tr key={r.topic_id}>
                 <td><span className={`tag s${r.severity}`}>{r.severity}</span> {r.label}</td>
                 <td className="n">{r.google || '—'}</td>
                 <td className="n">{r.instagram || '—'}</td>
+                <td className="n" title={`${r.answered} of ${total} carry a public reply`}>
+                  {r.answered}
+                  <span className="sub" style={{ display: 'inline', marginLeft: 4 }}>{total ? ((100 * r.answered) / total).toFixed(0) : 0}%</span>
+                </td>
                 <td style={{ color: 'var(--ink-2)' }}><b style={{ color: 'var(--ink)' }}>{only}.</b> {note}</td>
               </tr>
             );
@@ -191,14 +198,28 @@ function SentimentChart({ mix, useG }: { mix: ComplaintsResponse['sentiment_mix'
 }
 
 /** Horizontal term counts; rows carry either a `term` (negative terms) or a `label` (praise drivers). */
-function TermsChart({ rows, limit, color }: { rows: { n: number; term?: string; label?: string }[]; limit?: number; color: string }) {
+function TermsChart({ rows, limit, color }: { rows: { n: number; term?: string; label?: string; by_branch?: Record<string, number> }[]; limit?: number; color: string }) {
   const config = useMemo((): ChartConfig<'bar'> => {
     const top = rows.slice(0, limit);
     return {
       type: 'bar',
       data: { labels: top.map((t) => t.term ?? t.label ?? ''), datasets: [{ data: top.map((t) => t.n), backgroundColor: color, borderRadius: 4, barThickness: 13 }] },
       options: {
-        responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } },
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              /* Praise drivers carry a per-branch split; negative terms do not. */
+              afterBody: (c) => {
+                const by = top[c[0].dataIndex]?.by_branch;
+                return by && Object.keys(by).length
+                  ? Object.entries(by).sort((x, y) => y[1] - x[1]).map(([b, n]) => `${b}: ${n}`)
+                  : [];
+              },
+            },
+          },
+        },
         scales: { x: { ...AXIS, beginAtZero: true, ticks: { precision: 0, padding: 8 } }, y: NOGRID },
       },
     };
