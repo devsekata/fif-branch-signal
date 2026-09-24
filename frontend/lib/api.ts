@@ -28,6 +28,31 @@ function getJson<T>(url: string, fresh: boolean): Promise<T> {
   return promise as Promise<T>;
 }
 
+/** A failed request that carried a JSON body, so callers can show the API's own message. */
+export class ApiCallError extends Error {
+  constructor(message: string, readonly status: number, readonly body: unknown) {
+    super(message);
+    this.name = 'ApiCallError';
+  }
+}
+
+/** One-shot POST. Unlike `useApi` this is never cached and never shared — each call is a new side effect. */
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: unknown;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+  if (!res.ok) {
+    const msg = (parsed as { error?: { message?: string } } | null)?.error?.message;
+    throw new ApiCallError(msg ?? `${res.status} ${res.statusText}`, res.status, parsed);
+  }
+  return parsed as T;
+}
+
 export interface ApiResult<T> {
   /** Latest payload; while a new request is in flight this is still the previous one. */
   data: T | undefined;
