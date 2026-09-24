@@ -1,0 +1,16 @@
+services:
+  fif-branch-signal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fif-branch-signal
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3011}:3000"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    volumes:
+      - ./.env:/app/.env:ro
