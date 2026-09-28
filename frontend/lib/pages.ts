@@ -1,11 +1,11 @@
-export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method';
+export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest';
 export type FilterKey = 'branch' | 'period' | 'source';
 
 export interface PageDef {
   id: PageId;
   href: string;
   filters: FilterKey[];
-  group: 'Monitor' | 'Diagnose' | 'Act' | 'Reference';
+  group: 'Monitor' | 'Diagnose' | 'Act' | 'Reference' | 'Data';
   label: string;
   title: string;
   sub: string;
@@ -26,6 +26,8 @@ export const PAGES: PageDef[] = [
     sub: 'Instagram comment threads on the official account, scored on the same ladder as branch reviews.' },
   { id: 'method', href: '/method', filters: [], group: 'Reference', label: 'Method & limits', title: 'Method and limits',
     sub: 'What this prototype measures, what it cannot measure yet, and what production needs.' },
+  { id: 'ingest', href: '/ingest', filters: [], group: 'Data', label: 'Pull data', title: 'Pull new data',
+    sub: 'Queue a crawl of a branch on Google Maps or of the Instagram account. Every other page only reads what these jobs bring in.' },
 ];
 
 export const page = (id: PageId) => PAGES.find((p) => p.id === id)!;

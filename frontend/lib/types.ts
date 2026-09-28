@@ -262,6 +262,38 @@ export interface CaseItem {
   workflow: { status: string; owner: string | null; updated_at: string | null };
 }
 
+/* ---------- POST /v1/jobs ---------- */
+export type JobType = 'google-reviews-ingest' | 'instagram-comments-ingest';
+export type JobStatus = 'pending' | 'processing' | 'finished' | 'failed';
+
+export interface CreateJobRequest {
+  job_type: JobType;
+  /** Worker parameters. The spec types this as a free-form object and documents one example per job type. */
+  payload: Record<string, unknown>;
+  max_attempts?: number;
+  run_at?: string;
+}
+
+export interface JobQueueItem {
+  id: string;
+  jobType: string;
+  status: JobStatus;
+  payload: Record<string, unknown>;
+  attempts: number;
+  maxAttempts: number;
+  runAt: string;
+  createdAt: string;
+  /** Returned by the API on 24 Sep 2026 but absent from the spec's JobQueueItem schema. */
+  startedAt?: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+/** 422 body. `detail` is free-form, so it is rendered as JSON rather than parsed. */
+export interface ApiError {
+  error: { code: string; message: string; detail?: unknown };
+}
+
 export interface CasesResponse {
   context: ApiContext;
   page: { limit: number; offset: number; total: number; sort: string; order: string };
