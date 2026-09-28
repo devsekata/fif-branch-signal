@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Fragment, type ReactNode } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Fragment, useEffect, type ReactNode } from 'react';
 import { useApi } from '@/lib/api';
+import { roleName } from '@/lib/caseflow';
 import { FiltersProvider, useFilters } from '@/lib/filters';
 import { PAGES, pageForPath, type PageId } from '@/lib/pages';
 import { ReferenceProvider, useReference } from '@/lib/reference';
+import { initials, readSession, signOut, useSession } from '@/lib/session';
 import { wib } from '@/lib/theme';
 import type { CasesResponse, PeriodFilter, SourceFilter } from '@/lib/types';
 
@@ -58,10 +60,7 @@ function Sidebar() {
       <div className="side-foot">
         <div><span className="live" />Google reviews synced</div>
         <div style={{ marginTop: 3 }}>{google?.last_sync ? `Last read ${wib(google.last_sync)}` : ' '}</div>
-        <div className="who">
-          <div className="av">SK</div>
-          <div><b>Sekata</b><div style={{ fontSize: 11 }}>Prototype build v2</div></div>
-        </div>
+        <Who />
       </div>
     </aside>
   );
@@ -124,7 +123,40 @@ function Topbar() {
   );
 }
 
+/** Who is signed in, and the way out. */
+function Who() {
+  const session = useSession();
+  if (!session) return null;
+  const who = session.email.split('@')[0];
+  return (
+    <div className="who">
+      <div className="av">{initials(who)}</div>
+      <div style={{ minWidth: 0 }}>
+        <b style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={session.email}>{who}</b>
+        <div style={{ fontSize: 11 }}>{roleName(session.role)}</div>
+      </div>
+      <button className="sign-out" onClick={signOut} title="Sign out">Sign out</button>
+    </div>
+  );
+}
+
 export function Shell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const session = useSession();
+  const onLoginPage = pathname === '/login';
+
+  /* `session` is in the dependencies so signing out re-runs this; without it nothing changed
+   * when the session was cleared and the page sat on "Checking your session…" forever.
+   * The check itself reads localStorage rather than that value, because the hook reports null
+   * for the hydrating render and that would bounce a signed-in person back to the login screen. */
+  useEffect(() => {
+    if (!onLoginPage && !readSession()) router.replace('/login');
+  }, [onLoginPage, pathname, router, session]);
+
+  if (onLoginPage) return <>{children}</>;
+  if (!session) return <div className="gate-wait">Checking your session…</div>;
+
   return (
     <FiltersProvider>
       <ReferenceProvider>

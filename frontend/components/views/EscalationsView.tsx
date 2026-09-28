@@ -5,8 +5,9 @@ import { CaseDrawer, type DrawerCase } from '@/components/CaseDrawer';
 import { ApiPage, Chip, EmptyRow, NoText, Rating, SortHead, SourceBadge, Tags, type Col } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { STATE, type RoleId } from '@/lib/caseflow';
-import { readCase, useCaseStore } from '@/lib/caseStore';
+import { useCase } from '@/lib/caseStore';
 import { useReference } from '@/lib/reference';
+import { useSession } from '@/lib/session';
 import { nextSort, sortRows, useScope, type SortState } from '@/lib/scope';
 import { T } from '@/lib/theme';
 import type { CaseItem, CasesResponse, Channel, Priority } from '@/lib/types';
@@ -73,9 +74,9 @@ export function EscalationsView() {
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [sort, setSort] = useState<SortState<QueueKey>>(['score', 'desc']);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [role, setRole] = useState<RoleId>('cx');
+  const session = useSession();
+  const role: RoleId = session?.role ?? 'cx';
   const { topic } = useReference();
-  useCaseStore();
   const all = useMemo(() => (res.data?.items ?? []).map(toRow), [res.data]);
 
   /** The drawer needs topic labels too, because a track is decided on the topic, not the id. */
@@ -129,7 +130,17 @@ export function EscalationsView() {
                       <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>{c.age}d</td>
                       <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
                       <td>
-                        <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>{c.text ? c.text.slice(0, 420) : <NoText />}</div>
+                        <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>
+                          {c.text ? c.text.slice(0, 420) : <NoText />}
+                          {c.url && (
+                            <a className="open-link" href={c.url} target="_blank" rel="noopener"
+                              title="Open the original review" aria-label="Open the original review">
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M14 4h6v6M20 4l-8.6 8.6M18 14.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3.5" />
+                              </svg>
+                            </a>
+                          )}
+                        </div>
                         <div style={{ marginTop: 6 }}>
                           <Tags topics={c.topics} />
                           {c.sentiment && <span className="sub" style={{ marginLeft: 6 }}>{c.sentiment}</span>}
@@ -139,7 +150,6 @@ export function EscalationsView() {
                       <td>
                         <button className="btn2" onClick={() => setOpenId(c.id)}>Handle</button>
                         <HandledPill id={c.id} />
-                        {c.url && <div style={{ marginTop: 5 }}><a className="link" href={c.url} target="_blank" rel="noopener">Open</a></div>}
                       </td>
                     </tr>
                   )) : <EmptyRow colSpan={COLS.length + 1}>No cases match this filter.</EmptyRow>}
@@ -151,7 +161,7 @@ export function EscalationsView() {
                 key={opened.id}
                 c={toDrawer(opened)}
                 role={role}
-                onRole={setRole}
+                email={session?.email ?? ''}
                 onClose={() => setOpenId(null)}
               />
             )}
@@ -164,7 +174,7 @@ export function EscalationsView() {
 
 /** Handling state for a row, once the case has been touched. Held in memory only. */
 function HandledPill({ id }: { id: string }) {
-  const s = readCase(id);
+  const s = useCase(id);
   if (!s.trail.length) return null;
   const tone = STATE[s.status].tone;
   const color = tone === 'ok' ? 'var(--grow)' : tone === 'bad' ? T.sig : tone === 'warn' ? 'var(--warn)' : 'var(--ink-3)';

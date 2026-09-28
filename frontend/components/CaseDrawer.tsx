@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Rating, SourceBadge, Tags } from '@/components/ui';
 import {
-  EDITABLE, ROLES, SCORE_LABEL, STATE, TEMPLATES, TRACKS,
-  applyMove, logTo, movesFor, roleName, trackOf, withDraft,
+  EDITABLE, SCORE_LABEL, STATE, TEMPLATES, TRACKS,
+  applyMove, logTo, moveToStatus, movesFor, replyBody, roleName, trackOf, withDraft,
   type OfferedMove, type RoleId, type TrackId,
 } from '@/lib/caseflow';
-import { readCase, useCaseStore, writeCase } from '@/lib/caseStore';
+import { explain, fromServer, postReply, readCaseFromApi } from '@/lib/caseApi';
+import { readCase, useCase, writeCase } from '@/lib/caseStore';
 import type { Channel, Priority } from '@/lib/types';
+
+/** Moves the Send button in the composer stands for, whichever track the case is on. */
+const SEND_MOVES = ['send', 'send_appr'];
 
 /** What the drawer needs from a queue row. */
 export interface DrawerCase {
@@ -30,18 +34,17 @@ export interface DrawerCase {
   components: Record<string, number>;
 }
 
-export function CaseDrawer({ c, role, onRole, onClose }: {
+export function CaseDrawer({ c, role, email, onClose }: {
   c: DrawerCase | null;
   role: RoleId;
-  onRole: (r: RoleId) => void;
+  email: string;
   onClose: () => void;
 }) {
-  useCaseStore();
   const [simFail, setSimFail] = useState(false);
   const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const s = c ? readCase(c.id) : null;
+  const stored = useCase(c?.id);
+  const s = c ? stored : null;
   const track: TrackId | null = c ? trackOf({ topicIds: c.topics, topicLabels: c.topicLabels, severity: c.severity, hasText: !!c.text }) : null;
 
   /* `sending` is transient: the prototype resolves it on a timer rather than a click,
@@ -49,19 +52,17 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
   /* Depends on c.id, not c: the parent rebuilds the case object every render, so depending on
    * the object would clear and restart this timer each time and the send could never land. */
   const cid = c?.id;
-  const csource = c?.source;
+  /* The server owns the workflow now, so the drawer opens on what it says rather than on
+   * whatever this browser happened to remember. */
   useEffect(() => {
-    if (!cid || s?.status !== 'sending') return;
-    timer.current = setTimeout(() => {
-      const cur = readCase(cid);
-      if (cur.status !== 'sending') return;
-      const platform = csource === 'google' ? 'Google Business Profile' : 'Instagram';
-      writeCase(cid, simFail
-        ? logTo({ ...cur, status: 'failed' }, 'Send failed', 'API returned an error. The wording is kept; retry or post it manually.', role)
-        : logTo({ ...cur, status: 'sent' }, 'Reply published', `Delivered through the ${platform} API. Not yet confirmed by a sync.`, role));
-    }, 1100);
-    return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [cid, csource, s?.status, simFail, role]);
+    if (!cid) return;
+    let live = true;
+    readCaseFromApi(cid).then(
+      (fresh) => { if (live) writeCase(cid, { ...fresh, draft: readCase(cid).draft || fresh.draft }); },
+      () => { /* offline or the case is unknown: keep what is on screen */ },
+    );
+    return () => { live = false; };
+  }, [cid]);
 
   /* Mounted off-screen for one frame so the panel slides in rather than appearing.
    * The parent keys this component by case id, so every open starts from false. */
@@ -86,32 +87,43 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
   const moves = movesFor(s, track, role);
   const can = moves.filter((m) => !m.block);
   const cant = moves.filter((m) => m.block);
-  const sendMove = moves.find((m) => ['send', 'send_appr', 'retry'].includes(m.id));
-  const editable = EDITABLE.includes(s.status);
+  const retryMove = s.sendState === 'failed' ? moves.find((m) => m.id === s.pendingMove) ?? null : null;
+  const sendMove = retryMove ?? moves.find((m) => SEND_MOVES.includes(m.id));
+  const editable = EDITABLE.includes(s.status) && s.sendState === 'idle';
   const pool = track === 'conduct' ? TEMPLATES.conduct : TEMPLATES.service;
   const steps = TRACKS[track];
   const at = steps.indexOf(s.status);
 
-  function run(m: OfferedMove) {
-    if (!c || m.block) return;
+  async function run(m: OfferedMove) {
+    if (!c || m.block || stored.sendState === 'sending') return;
     let note: string | undefined;
     if (m.id === 'reject') {
       const answer = window.prompt('Why is it going back? The author sees this note.', 'Wording implies an admission of fault.');
       if (answer === null) return;
       note = answer;
     }
-    writeCase(c.id, applyMove(readCase(c.id), m, role, note));
+    const before = readCase(c.id);
+    writeCase(c.id, { ...before, sendState: 'sending', pendingMove: m.id, apiError: null });
+    try {
+      const res = await postReply(c.id, replyBody(before, m, role, c.severity, email));
+      const moved = applyMove(before, m, role, note, email);
+      writeCase(c.id, fromServer({ ...moved, status: m.to, sendState: 'idle', pendingMove: null }, res));
+    } catch (e) {
+      /* Nothing is applied when the server says no, so the screen never shows a step it refused. */
+      writeCase(c.id, { ...before, sendState: 'failed', pendingMove: m.id, apiError: explain(e) });
+    }
   }
 
-  const lock: Partial<Record<string, string>> = {
-    pending: 'Locked while compliance reviews it.',
-    approved: 'Locked after approval — editing would void the sign-off.',
-    sending: 'Sending to the platform…',
-    failed: 'The API rejected the send. Retry, or post it manually.',
-    sent: 'Posted. Reopen the case to change anything.',
-    verified: 'Verified on the platform.',
-    closed: 'Case closed.',
-  };
+  const lock = s.sendState === 'sending' ? 'Saving to the server…'
+    : s.sendState === 'failed' ? 'The server refused the last step. Nothing was changed.'
+    : ({
+        pending: s.isFinal ? 'Approved — editing would void the sign-off.' : 'Locked while compliance reviews it.',
+        rejected: 'Sent back. Use Rewrite the draft to reopen the composer.',
+        manual_reply_submitted: 'Posted. Reopen the case to change anything.',
+        resolved: 'Published and confirmed.',
+        closed: 'Case closed.',
+      } as Partial<Record<string, string>>)[s.status];
+
 
   const comp = Object.entries(c.components).filter(([, v]) => typeof v === 'number' && v > 0).sort((a, b) => b[1] - a[1]);
   const compMax = comp.length ? Math.max(...comp.map(([, v]) => v)) : 1;
@@ -128,12 +140,8 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
               <span className="chip c-low" style={{ marginLeft: 6 }}>{track} track</span>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span className="demo-tag">Demo role</span>
-              <div className="role">
-                {ROLES.map((r) => (
-                  <button key={r.id} className={role === r.id ? 'on' : undefined} onClick={() => onRole(r.id)}>{r.label}</button>
-                ))}
-              </div>
+              <span className="demo-tag">Acting as</span>
+              <span className="role-now">{roleName(role)}</span>
               <button className="dw-close" onClick={onClose} aria-label="Close">×</button>
             </div>
           </div>
@@ -148,13 +156,27 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
             <span>{s.owner ? `Owner ${s.owner}` : 'Unassigned'}</span>
             {c.url && <><span style={{ color: '#C3D3D1' }}>·</span><a className="link" href={c.url} target="_blank" rel="noopener">Open original</a></>}
           </div>
+          {/* Each status is a button when exactly one permitted move lands on it, so the flow can
+              be driven from the line itself. The rules still decide: a status nobody may move to
+              from here stays inert and says why. */}
           <div className="state-line">
-            {steps.map((k, i) => (
-              <span key={k}>
-                <span className={`st ${at < 0 ? '' : i < at ? 'done' : i === at ? 'now' : ''}`}>{STATE[k].label}</span>
-                {i < steps.length - 1 && <span className="arrow"> ▸ </span>}
-              </span>
-            ))}
+            {steps.map((k, i) => {
+              const mv = moveToStatus(moves, k);
+              const tone = at < 0 ? '' : i < at ? 'done' : i === at ? 'now' : '';
+              const why = mv?.block ? `${mv.label} — ${mv.block}` : undefined;
+              return (
+                <span key={k}>
+                  {mv && !mv.block ? (
+                    <button type="button" className={`st st-go ${tone}`} onClick={() => run(mv)} title={mv.desc}>
+                      {STATE[k].label}
+                    </button>
+                  ) : (
+                    <span className={`st ${tone}`} title={why}>{STATE[k].label}</span>
+                  )}
+                  {i < steps.length - 1 && <span className="arrow"> ▸ </span>}
+                </span>
+              );
+            })}
             {s.external && <span className="st done">replied outside</span>}
           </div>
         </div>
@@ -184,6 +206,14 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
 
           <div className="blk">
             <h4>Next step<span className="hint">as {roleName(role)}</span></h4>
+            {s.apiError && (
+              <div className="blocked" style={{ marginBottom: 11 }}>
+                <b>Nothing was changed.</b> {s.apiError}
+              </div>
+            )}
+            {s.sendState === 'sending' && (
+              <div className="sim" style={{ marginBottom: 11 }}><span>●</span><span>Saving to the server…</span></div>
+            )}
             {track === 'doxing' && (
               <div className="blocked" style={{ marginBottom: 11 }}>
                 <b>Do not reply to this one.</b> Answering a comment that exposes someone&apos;s personal data amplifies its reach and puts FIF in public dialogue with content that should be removed. Hide, report, escalate — the composer is locked by policy, and no role unlocks it.
@@ -227,7 +257,7 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
           ) : (track === 'silent' && !s.draft) ? null : (
             <div className="blk">
               <h4>Reply<span className="hint">templates are placeholders, pending FIF legal</span></h4>
-              {lock[s.status] && <div className="sim" style={{ marginBottom: 10 }}><span>●</span><span>{lock[s.status]}</span></div>}
+              {lock && <div className="sim" style={{ marginBottom: 10 }}><span>●</span><span>{lock}</span></div>}
               <select
                 className="tpl" value={s.templateId} disabled={!editable}
                 onChange={(e) => {
@@ -258,7 +288,7 @@ export function CaseDrawer({ c, role, onRole, onClose }: {
                   className="btn2 solid" disabled={!sendMove || !!sendMove.block}
                   title={sendMove ? (sendMove.block ?? 'Publish to the platform') : 'Not available in this state'}
                   onClick={() => sendMove && run(sendMove)}
-                >{s.status === 'sending' ? 'Sending…' : s.status === 'failed' ? 'Retry send' : 'Send the reply'}</button>
+                >{s.sendState === 'sending' ? 'Sending…' : s.sendState === 'failed' ? 'Retry send' : 'Send the reply'}</button>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-3)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={simFail} onChange={(e) => setSimFail(e.target.checked)} /> simulate an API failure
                 </label>
