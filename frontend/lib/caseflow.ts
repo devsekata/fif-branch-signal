@@ -197,7 +197,7 @@ export const newCaseState = (): CaseState => ({
 /** What a case is scored and handled as. Topic decides, not the person looking at it. */
 export function trackOf(input: { topicIds: string[]; topicLabels: string[]; severity: number; hasText: boolean }): TrackId {
   const hay = [...input.topicIds, ...input.topicLabels].join(' ');
-  if (/doxing|data_pribadi|data pribadi/i.test(hay)) return 'if (input.severity === 4) return 'if (input.severity === 4) return 'conduct';
+  if (/doxing|data_pribadi|data pribadi/i.test(hay)) return 'doxing';
   if (input.severity === 4) return 'conduct';
   if (!input.hasText) return 'silent';
   return 'service';
