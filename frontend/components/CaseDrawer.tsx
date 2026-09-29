@@ -12,7 +12,7 @@ import { readCase, useCase, writeCase } from '@/lib/caseStore';
 import type { Channel, Priority } from '@/lib/types';
 
 /** Moves the Send button in the composer stands for, whichever track the case is on. */
-const SEND_MOVES = ['send', 'send_appr'];
+const SEND_MOVES = ['send', 'send_appr', 'send_comp'];
 
 /** What the drawer needs from a queue row. */
 export interface DrawerCase {
