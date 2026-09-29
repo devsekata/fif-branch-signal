@@ -89,6 +89,13 @@ export const MOVES: Move[] = [
   { id: 'submit', from: ['draft'], to: 'pending', roles: ['branch', 'cx'], tracks: ['conduct'],
     label: 'Submit for compliance approval', desc: 'Severity 4 wording cannot be published without sign-off.',
     needsDraft: true, kind: 'primary' },
+    /* Compliance writing its own severity 4 reply is the sign-off, so it publishes directly. */
+  { id: 'send_comp', from: ['draft'], to: 'resolved', roles: ['comp'], tracks: ['conduct'],
+    label: 'Send the reply', desc: 'Your own wording counts as the sign-off. Publishes through the API with is_final true.',
+    needsDraft: true, setsFinal: true, kind: 'primary', async: true },
+  { id: 'mark_sent_comp', from: ['draft'], to: 'manual_reply_submitted', roles: ['comp'], tracks: ['conduct'],
+    label: 'Mark as posted manually', desc: 'You pasted your own signed-off wording into the platform yourself.',
+    needsDraft: true, setsFinal: true },
   { id: 'approve', from: ['pending'], to: 'pending', roles: ['comp'], tracks: ['conduct'],
     needsNotFinal: true, setsFinal: true, kind: 'primary',
     label: 'Approve the wording', desc: 'Clears the draft for publication exactly as written. Sends is_final true.' },
