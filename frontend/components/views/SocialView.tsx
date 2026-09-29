@@ -6,10 +6,17 @@ import { ApiPage, Chip, Metric, PanelHead, Tags } from '@/components/ui';
 import { useApi, type Params } from '@/lib/api';
 import { useReference } from '@/lib/reference';
 import { useScope } from '@/lib/scope';
+import { PostSentiments } from '@/components/views/PostSentiments';
 import { T, plural, sevColor } from '@/lib/theme';
 import type { IntegrityResponse, SocialResponse, SocialThread } from '@/lib/types';
 
 type SocFilter = 'all' | 'critical' | 'high' | 'medium' | 'unanswered';
+type Half = 'account' | 'mentions';
+
+/* Two different questions, so two tabs rather than one long page. The account half is what
+ * people write on FIF's own posts; the mentions half is what they write elsewhere and a
+ * keyword search had to go and find. Neither ever shows up in the other. */
+const HALVES: [Half, string][] = [['account', 'On the FIF account'], ['mentions', 'Mentions elsewhere']];
 
 const CHIPS: [SocFilter, string][] = [['all', 'All threads'], ['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['unanswered', 'Unanswered']];
 const DOXING = ['doxing_sebar_data_pribadi', 'Doxing & Sebar Data Pribadi'];
@@ -21,6 +28,7 @@ export function SocialView() {
   const [filter, setFilter] = useState<SocFilter>('all');
   const { source } = useReference();
   const ig = source('instagram');
+  const [half, setHalf] = useState<Half>('account');
 
   return (
     <ApiPage res={res}>
@@ -38,6 +46,13 @@ export function SocialView() {
           : filter === 'all' ? threads : threads.filter((t) => t.priority === filter);
         return (
           <>
+            <div className="tabs">
+              {HALVES.map(([k, label]) => (
+                <button key={k} className={half === k ? 'on' : undefined} onClick={() => setHalf(k)}>{label}</button>
+              ))}
+            </div>
+
+            {half === 'mentions' ? <PostSentiments /> : <>
             <div className="grid g-4 mb">
               <Metric k="Threads" v={S.threads} n={`${S.root_comments} comments, ${S.replies_captured} replies read`} />
               <Metric k="Complaint threads" v={S.complaint_threads} n={`${S.conduct_level} at conduct level · ${S.pile_ons} ${plural(S.pile_ons, 'pile-on', 'pile-ons')}`} />
@@ -93,6 +108,7 @@ export function SocialView() {
                 <WeeklyChart weekly={d.weekly} />
               </div>
             </div>
+            </>}
           </>
         );
       }}
