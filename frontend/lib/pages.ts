@@ -1,4 +1,4 @@
-export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest';
+export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest' | 'settings';
 export type FilterKey = 'branch' | 'period' | 'source';
 
 export interface PageDef {
@@ -28,6 +28,8 @@ export const PAGES: PageDef[] = [
     sub: 'What this prototype measures, what it cannot measure yet, and what production needs.' },
   { id: 'ingest', href: '/ingest', filters: [], group: 'Data', label: 'Pull data', title: 'Pull new data',
     sub: 'Queue a crawl of a branch on Google Maps or of the Instagram account. Every other page only reads what these jobs bring in.' },
+  { id: 'settings', href: '/settings', filters: [], group: 'Data', label: 'Settings', title: 'Settings',
+    sub: 'Which brand is monitored, what counts as a complaint, and what the scraper searches for.' },
 ];
 
 export const page = (id: PageId) => PAGES.find((p) => p.id === id)!;

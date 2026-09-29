@@ -16,6 +16,14 @@ The API base URL defaults to `https://api-fif.kepiai.co`. To point at another en
 NEXT_PUBLIC_API_BASE_URL=https://api-fif.kepiai.co
 ```
 
+Post Sentiments (Social → Mentions elsewhere) and Settings read from the Sekata Insight Connector instead. It only accepts a session cookie, so `app/sekata/[...path]/route.ts` signs in on the server as one service account and forwards `/sekata/api/*` with that cookie. Nobody using the dashboard signs in to Sekata, and anyone who can open the dashboard acts as that account. Set these in `.env.local` (server-side only):
+
+```
+SEKATA_API_BASE_URL=https://sekata-autometric.up.railway.app
+SEKATA_EMAIL=
+SEKATA_PASSWORD=
+```
+
 ## Layout
 
 | Path | What it holds |
