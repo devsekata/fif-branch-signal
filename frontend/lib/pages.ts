@@ -1,11 +1,11 @@
-export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method';
+export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest' | 'settings';
 export type FilterKey = 'branch' | 'period' | 'source';
 
 export interface PageDef {
   id: PageId;
   href: string;
   filters: FilterKey[];
-  group: 'Monitor' | 'Diagnose' | 'Act' | 'Reference';
+  group: 'Monitor' | 'Diagnose' | 'Act' | 'Reference' | 'Data';
   label: string;
   title: string;
   sub: string;
@@ -26,6 +26,10 @@ export const PAGES: PageDef[] = [
     sub: 'Instagram comment threads on the official account, scored on the same ladder as branch reviews.' },
   { id: 'method', href: '/method', filters: [], group: 'Reference', label: 'Method & limits', title: 'Method and limits',
     sub: 'What this prototype measures, what it cannot measure yet, and what production needs.' },
+  { id: 'ingest', href: '/ingest', filters: [], group: 'Data', label: 'Pull data', title: 'Pull new data',
+    sub: 'Queue a crawl of a branch on Google Maps or of the Instagram account. Every other page only reads what these jobs bring in.' },
+  { id: 'settings', href: '/settings', filters: [], group: 'Data', label: 'Settings', title: 'Settings',
+    sub: 'Which brand is monitored, what counts as a complaint, and what the scraper searches for.' },
 ];
 
 export const page = (id: PageId) => PAGES.find((p) => p.id === id)!;
