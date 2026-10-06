@@ -77,6 +77,36 @@ export interface ConfigResponse {
   known_limits: { id: string; applies_to: Channel[]; text: string }[];
 }
 
+/* ---------- /v1/areas/branches ---------- */
+export interface AreaBranchRow {
+  branch_id: string;
+  branch: string;
+  city: string;
+  address: string | null;
+  /** Null when the address names no kecamatan held in the master tables. */
+  kecamatan_id: number | null;
+  kecamatan: string | null;
+  kabkota_id: number | null;
+  kabkota: string | null;
+  provinsi_id: number | null;
+  provinsi: string | null;
+  placed_by: 'address' | null;
+  /** The kecamatan the address names, kept even when the master tables do not hold it. */
+  stated_kecamatan: string | null;
+  total: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+  never_answered: number;
+  sentiment_score: number | null;
+}
+
+export interface AreaBranchesResponse {
+  context: ApiContext;
+  summary: { branches: number; placed: number; kecamatan: number };
+  rows: AreaBranchRow[];
+}
+
 /* ---------- /v1/pages/overview ---------- */
 export interface OverviewResponse {
   context: ApiContext;

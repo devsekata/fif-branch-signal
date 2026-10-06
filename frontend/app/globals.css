@@ -327,6 +327,25 @@ tbody tr:last-child td{border-bottom:none}
   padding:9px 0;color:#fff}
 .heat .name{padding:6px 10px 6px 2px;font-size:12.3px;white-space:nowrap}
 
+/* kecamatan map, after fif_executive_summary.html. z-index keeps Leaflet's panes under the sticky topbar. */
+.kec-map{height:380px;border-radius:var(--r-lg) var(--r-lg) 0 0;border:1px solid var(--rule);background:var(--wash);z-index:0;font-family:inherit;margin-top:10px}
+.kec-wait{display:grid;place-items:center;color:var(--ink-3);font-size:12.5px}
+.kec-filter{margin-left:auto}
+.kec-legend{display:flex;gap:20px;align-items:center;flex-wrap:wrap;padding:12px 20px;background:var(--wash);
+  border:1px solid var(--rule);border-top:none;border-radius:0 0 var(--r-lg) var(--r-lg);font-size:11px;color:var(--ink-2)}
+.kec-legend-title{font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.08em;margin-right:12px}
+.kec-legend span{display:flex;align-items:center;gap:6px}
+.kec-legend i{width:16px;height:16px;border-radius:3px;flex:none}
+/* The card must not catch the pointer, or moving onto it would count as leaving the kecamatan and close it. */
+.kec-map .leaflet-popup{pointer-events:none}
+/* which administrative level the current zoom is showing */
+.kec-legend .kec-levels{margin-left:auto;gap:4px}
+.kec-levels b{font-weight:600;padding:2px 8px;border-radius:20px;color:var(--ink-3)}
+.kec-levels b.on{background:var(--deep);color:#fff}
+.kec-pop{font-family:var(--font-jakarta),system-ui,sans-serif;font-size:11px;line-height:1.5;color:var(--ink)}
+.kec-pop b{font-size:12px;font-weight:600;display:block;margin-bottom:6px}
+.kec-pop-metric{margin-top:4px}
+
 /* filter chips */
 .chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
 .chips button{font-family:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:20px;
