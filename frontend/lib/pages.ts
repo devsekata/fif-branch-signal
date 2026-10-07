@@ -1,4 +1,4 @@
-export type PageId = 'overview' | 'branches' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest' | 'settings';
+export type PageId = 'overview' | 'branches' | 'map' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest' | 'settings';
 export type FilterKey = 'branch' | 'period' | 'source';
 
 export interface PageDef {
@@ -16,6 +16,8 @@ export const PAGES: PageDef[] = [
     sub: 'What needs a decision this week, across every branch in the sample.' },
   { id: 'branches', href: '/branches', filters: ['branch', 'period'], group: 'Monitor', label: 'Branches', title: 'Branch performance',
     sub: 'Ranked on rates rather than counts, because the scrape covers each branch unevenly.' },
+  { id: 'map', href: '/map', filters: ['period'], group: 'Monitor', label: 'Area map', title: 'Area map',
+    sub: 'Jakarta Barat branches placed on their kecamatan, so a district with several branches reads as one area.' },
   { id: 'complaints', href: '/complaints', filters: ['branch', 'period', 'source'], group: 'Diagnose', label: 'Complaint themes', title: 'Complaint themes',
     sub: 'What goes wrong, how serious it is, and whether it belongs to a branch or to head office.' },
   { id: 'escalations', href: '/escalations', filters: ['branch', 'period', 'source'], group: 'Act', label: 'Escalations', title: 'Escalation queue',
