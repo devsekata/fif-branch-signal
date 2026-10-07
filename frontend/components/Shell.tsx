@@ -4,18 +4,20 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Fragment, useEffect, type ReactNode } from 'react';
 import { useApi } from '@/lib/api';
+import { PeriodControl, ScopeControl, SourceControl } from '@/components/ScopeControl';
 import { roleName } from '@/lib/caseflow';
 import { FiltersProvider, useFilters } from '@/lib/filters';
-import { PAGES, pageForPath, type PageId } from '@/lib/pages';
+import { PAGES, branchIdOfPath, pageForPath, type PageId, type ScopeCap } from '@/lib/pages';
 import { ReferenceProvider, useReference } from '@/lib/reference';
+import { currentOf } from '@/lib/scope';
 import { initials, readSession, signOut, useSession } from '@/lib/session';
 import { wib } from '@/lib/theme';
-import type { CasesResponse, PeriodFilter, SourceFilter } from '@/lib/types';
+import type { CasesResponse } from '@/lib/types';
 
-const ICON: Record<PageId, ReactNode> = {
+const ICON: Partial<Record<PageId, ReactNode>> = {
   overview: <path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z" />,
   branches: <path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1M9 13h1M14 9h1M14 13h1M10 21v-4h4v4" />,
-  map: <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14" />,
+  geography: <><circle cx="12" cy="10" r="3" /><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" /></>,
   complaints: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM12 7v4M12 14h.01" />,
   escalations: <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />,
   integrity: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></>,
@@ -25,7 +27,8 @@ const ICON: Record<PageId, ReactNode> = {
   settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
 };
 
-const GROUPS = [...new Set(PAGES.map((p) => p.group))];
+const NAV = PAGES.filter((p) => !p.hidden);
+const GROUPS = [...new Set(NAV.map((p) => p.group))];
 
 /** Critical cases across both channels; the Instagram share feeds the Social listening badge. */
 function useTally(): Partial<Record<PageId, number>> {
@@ -35,6 +38,8 @@ function useTally(): Partial<Record<PageId, number>> {
 
 function Sidebar() {
   const current = pageForPath(usePathname());
+  /* A branch is opened from Area & Branch, so that is the item it lights up. */
+  const active = current.id === 'branch' ? 'branches' : current.id;
   const tally = useTally();
   const google = useReference().source('google');
   return (
@@ -47,8 +52,8 @@ function Sidebar() {
         {GROUPS.map((g) => (
           <Fragment key={g}>
             <div className="nav-group">{g}</div>
-            {PAGES.filter((p) => p.group === g).map((p) => (
-              <Link key={p.id} href={p.href} className={p.id === current.id ? 'nav-item on' : 'nav-item'}>
+            {NAV.filter((p) => p.group === g).map((p) => (
+              <Link key={p.id} href={p.href} className={p.id === active ? 'nav-item on' : 'nav-item'}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                   {ICON[p.id]}
                 </svg>
@@ -68,59 +73,58 @@ function Sidebar() {
   );
 }
 
+/* What the scope control means on each page, and what it cannot do.
+ * A page that cannot honour the scope says so rather than ignoring it. */
+const CAP_NOTE: Partial<Record<ScopeCap, string>> = {
+  self: 'This page is one branch. Changing the scope opens a different branch.',
+  partial: 'The Google panels follow the scope. The Instagram panel cannot — social comments carry no area — so it keeps showing everything.',
+  none: 'Scope is off here. Instagram comments carry no province, kota or branch, so there is nothing to narrow by.',
+};
+
 function Topbar() {
-  const p = pageForPath(usePathname());
-  const { filters, setFilter } = useFilters();
-  const branches = useReference().meta?.branches ?? [];
+  const pathname = usePathname();
+  const p = pageForPath(pathname);
+  const { filters } = useFilters();
+  const { place } = useReference();
   const src = filters.source;
   const hasSource = p.filters.includes('source');
-  const show = {
-    branch: p.filters.includes('branch') && !(hasSource && src === 'instagram'),
-    period: p.filters.includes('period'),
-    source: hasSource,
-  };
+  const igOnly = hasSource && src === 'instagram';
+  const cap = p.scope;
+  const capOn = cap !== 'none' && cap !== 'off';
+  const cur = currentOf(filters.scope);
+  const isSet = cur.level !== 'all';
+  const scopeName = cur.level === 'branch' ? place(cur.value!)?.name ?? cur.value : cur.value;
+  const note = CAP_NOTE[cap];
 
-  let scope = '';
-  if (hasSource && src === 'instagram')
-    scope = 'Instagram only. Branch filtering is off because social comments carry no branch, and any branch-shaped view on this page is empty by design.';
-  if (hasSource && src !== 'instagram' && filters.branch !== 'all' && p.id !== 'branches')
-    scope = 'A branch is selected, so Instagram is excluded from this view.';
+  let strip = '';
+  if (igOnly) strip = 'Instagram only. Scope is off, because social comments carry no province, kota or branch.';
+  else if (cap === 'none') strip = isSet ? `${note} The scope you set (${scopeName}) still applies on every other page.` : note!;
+  else if (cap === 'partial' && isSet) strip = note!;
+  else if (isSet && hasSource && capOn)
+    strip = `Scoped to ${scopeName} — Instagram is excluded, because social comments carry no ${cur.level === 'branch' ? 'branch' : 'area'}.`;
+
+  /* The branch page is titled by the branch it shows. */
+  const shown = p.id === 'branch' ? place(branchIdOfPath(pathname) ?? '') : undefined;
+  const title = shown?.name ?? p.title;
+  const sub = shown ? [shown.kecamatan, shown.kota, shown.province].filter(Boolean).join(' · ') || shown.city : p.sub;
 
   return (
     <>
       <div className="topbar">
         <div>
-          <h1>{p.title}</h1>
-          <p>{p.sub}</p>
+          <h1>{title}</h1>
+          <p>{sub}</p>
         </div>
         <div className="controls">
-          {show.branch && (
-            <select className="ctl" aria-label="Filter by branch" value={filters.branch}
-              onChange={(e) => setFilter('branch', e.target.value)}>
-              <option value="all">All branches</option>
-              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+          {cap !== 'off' && cap !== 'self' && (
+            <ScopeControl off={!capOn || igOnly}
+              title={!capOn || igOnly ? note ?? 'Scope does not apply while the source is Instagram' : 'Narrow every page to a province, kota, kecamatan or branch'} />
           )}
-          {show.source && (
-            <select className="ctl" aria-label="Filter by data source" value={filters.source}
-              onChange={(e) => setFilter('source', e.target.value as SourceFilter)}>
-              <option value="all">Data Source</option>
-              <option value="google">Google reviews</option>
-              <option value="instagram">Instagram</option>
-            </select>
-          )}
-          {show.period && (
-            <select className="ctl" aria-label="Filter by period" value={filters.period}
-              onChange={(e) => setFilter('period', e.target.value as PeriodFilter)}>
-              <option value="all">Full 12 months</option>
-              <option value="90">Last 90 days</option>
-              <option value="180">Last 180 days</option>
-              <option value="365">Last 365 days</option>
-            </select>
-          )}
+          {hasSource && <SourceControl />}
+          {p.filters.includes('period') && <PeriodControl />}
         </div>
       </div>
-      {scope && <div className="scope-strip on">{scope}</div>}
+      {strip && <div className="scope-strip on">{strip}</div>}
     </>
   );
 }

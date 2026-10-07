@@ -1,9 +1,6 @@
-import type { Metadata } from 'next';
-import { AreaMapView } from '@/components/views/AreaMapView';
-import { page } from '@/lib/pages';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: page('map').title };
-
+/* The Jakarta Barat area map grew into Geography; old links land there. */
 export default function Page() {
-  return <AreaMapView />;
+  redirect('/geography');
 }
