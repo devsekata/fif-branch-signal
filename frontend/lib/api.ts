@@ -16,7 +16,7 @@ export function apiUrl(path: string, params: Params = {}) {
 const TTL = 60_000;
 const cache = new Map<string, { at: number; promise: Promise<unknown> }>();
 
-function getJson<T>(url: string, fresh: boolean): Promise<T> {
+export function getJson<T>(url: string, fresh = false): Promise<T> {
   const hit = cache.get(url);
   if (!fresh && hit && Date.now() - hit.at < TTL) return hit.promise as Promise<T>;
   const promise = fetch(url, { headers: { accept: 'application/json' } }).then((r) => {

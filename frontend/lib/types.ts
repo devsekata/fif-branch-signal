@@ -191,8 +191,8 @@ export interface ComplaintsResponse {
 /* ---------- /v1/pages/integrity ---------- */
 /** ASSUMED shape. */
 export interface CollectionDay { branch: string; date: string; n: number; avg: number; notext: number }
-/** ASSUMED shape. */
-export interface DuplicateSet { text: string; users: string[]; n: number }
+/** The API sends `accounts` and `count`; the prototype called them `users` and `n`. Both are read. */
+export interface DuplicateSet { text: string; users?: string[]; n?: number; accounts?: string[]; count?: number; window_minutes?: number }
 
 export interface IntegrityResponse {
   context: ApiContext;
@@ -222,14 +222,15 @@ export interface IntegrityResponse {
 }
 
 /* ---------- /v1/pages/social ---------- */
-/** ASSUMED shape. */
+/* The API has renamed these fields since the prototype (`user` became `author`, `ts` became
+ * `posted_at`, and so on). `lib/social.ts` reads either spelling and hands the views this shape. */
 export interface SocialReply { user: string; text: string; ts: string; is_brand: boolean }
-/** ASSUMED shape. */
 export interface SocialThread {
   id: string;
   user: string;
   text: string;
   ts: string;
+  age: number;
   likes: number;
   declared: number;
   captured: number;
@@ -237,12 +238,18 @@ export interface SocialThread {
   brand_replied: boolean;
   latency_h: number | null;
   pile_on: boolean;
+  followups_after_brand: number;
   topics: string[];
+  severity: number;
+  sentiment: string;
   is_complaint: boolean;
   criticality: number;
   priority: Priority;
+  url: string | null;
   replies: SocialReply[];
 }
+
+export interface SocialTopic { topic: string; sev: number; n: number; answered: number; last: string | null }
 
 export interface SocialResponse {
   context: ApiContext;
@@ -263,9 +270,7 @@ export interface SocialResponse {
   };
   threads: SocialThread[];
   response_funnel: { complaints: number; answered: number; no_followup: number };
-  /** ASSUMED shape. */
-  topics: { topic: string; sev: number; n: number; answered: number; last: string }[];
-  /** ASSUMED shape. */
+  topics: SocialTopic[];
   weekly: { week: string; n: number; comp: number }[];
 }
 
@@ -273,7 +278,7 @@ export interface SocialResponse {
 export interface CaseItem {
   case_id: string;
   source: Channel;
-  channel_ref: { branch_id?: string; branch?: string; place_id?: string };
+  channel_ref: { branch_id?: string; branch?: string; place_id?: string; post_id?: string; thread_id?: string; account_handle?: string };
   posted_at: string;
   age_days: number;
   stars: number | null;
@@ -334,4 +339,82 @@ export interface CasesResponse {
     by_topic: Record<string, number>;
   };
   items: CaseItem[];
+}
+
+/* ---------- /v1/signal/* ---------- */
+/** Positive, neutral, negative and the 0–100 score built on them. `score` is null when nothing was read. */
+export interface Mix { good: number; neutral: number; bad: number; total: number; score: number | null }
+
+export interface SignalMonth extends Mix {
+  month: string;
+  reviews: number;
+  google_complaints: number;
+  instagram_complaints: number;
+  avg_rating: number | null;
+}
+
+export interface SignalOverviewResponse {
+  context: ApiContext;
+  min_n: number;
+  mix: Mix;
+  mix_by_source: Record<Channel, Mix>;
+  neutral_rating_only: number;
+  headline: {
+    items_read: number;
+    complaints: number;
+    complaint_rate_pct: number;
+    open_cases: number;
+    conduct_level: number;
+    never_answered: number;
+    oldest_unanswered_days: number;
+    by_priority: Record<'critical' | 'high' | 'medium' | 'low', number>;
+  };
+  longest_unanswered: { case_id: string; source: Channel; label: string; stars: number | null; excerpt: string; age_days: number }[];
+  monthly: SignalMonth[];
+  severity_mix: { source: Channel; complaints: number; by_severity: Record<string, number> }[];
+  collection: { reviews: number; five_star_pct: number; one_star_pct: number; no_text_pct: number; first_time_account_pct: number };
+}
+
+export interface SignalBranch extends Mix {
+  branch_id: string;
+  branch: string;
+  city: string;
+  address: string | null;
+  province: string | null;
+  kota: string | null;
+  kecamatan: string | null;
+  stated_kecamatan: string | null;
+  reviews_universe: number | null;
+  reviews_read: number;
+  coverage_pct: number | null;
+  enough: boolean;
+  /** Position among the scored branches of the response, best first. */
+  rank: number | null;
+  unanswered: number;
+  avg_rating: number | null;
+  complaints: number;
+  complaint_rate_pct: number;
+  critical_high: number;
+  conduct_flags: number;
+  oldest_open_days: number;
+  rating_only_pct: number;
+  new_account_pct: number;
+  risk_score: number;
+  rating_mix: [number, number, number, number, number];
+}
+
+export interface SignalArea extends Mix {
+  name: string;
+  province: string | null;
+  kota: string | null;
+  enough: boolean;
+  branches: number;
+  unanswered: number;
+}
+
+export interface SignalBranchesResponse {
+  context: ApiContext;
+  min_n: number;
+  branches: SignalBranch[];
+  areas: Record<'province' | 'kota' | 'kecamatan', SignalArea[]>;
 }

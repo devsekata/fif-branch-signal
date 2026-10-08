@@ -1,34 +1,49 @@
 'use client';
 
 import { Fragment, useMemo, useState } from 'react';
+import { useCaseDrawer } from '@/components/CaseHost';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
-import { ApiPage, Chip, Metric, PanelHead, Tags } from '@/components/ui';
+import { ApiPage, Chip, Chips, Metric, PanelHead, Tags } from '@/components/ui';
 import { useApi, type Params } from '@/lib/api';
+import { useCaseList } from '@/lib/cases';
+import { useFilters } from '@/lib/filters';
 import { useReference } from '@/lib/reference';
-import { useScope } from '@/lib/scope';
+import { currentOf, useView } from '@/lib/scope';
+import { dupUsers, readSocial } from '@/lib/social';
+import { ImageAnalysis } from '@/components/views/ImageAnalysis';
 import { PostSentiments } from '@/components/views/PostSentiments';
 import { T, plural, sevColor } from '@/lib/theme';
 import type { IntegrityResponse, SocialResponse, SocialThread } from '@/lib/types';
 
 type SocFilter = 'all' | 'critical' | 'high' | 'medium' | 'unanswered';
-type Half = 'account' | 'mentions';
+type Half = 'account' | 'mentions' | 'images';
 
-/* Two different questions, so two tabs rather than one long page. The account half is what
- * people write on FIF's own posts; the mentions half is what they write elsewhere and a
- * keyword search had to go and find. Neither ever shows up in the other. */
-const HALVES: [Half, string][] = [['account', 'On the FIF account'], ['mentions', 'Mentions elsewhere']];
+/* Different questions, so tabs rather than one long page. The account tab is what people write
+ * on FIF's own posts; the mentions tab is what they write elsewhere and a keyword search had to
+ * go and find; the image tab judges one uploaded picture. None ever shows up in another. */
+const HALVES: [Half, string][] = [['account', 'On the FIF account'], ['mentions', 'Mentions elsewhere'], ['images', 'Image analysis']];
 
 const CHIPS: [SocFilter, string][] = [['all', 'All threads'], ['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['unanswered', 'Unanswered']];
 const DOXING = ['doxing_sebar_data_pribadi', 'Doxing & Sebar Data Pribadi'];
 const isOpenComplaint = (t: SocialThread) => t.is_complaint && !t.brand_replied;
 
 export function SocialView() {
-  const { params } = useScope('social');
-  const res = useApi<SocialResponse>('/v1/pages/social', params);
+  const view = useView('social');
+  const { params } = view;
+  const raw = useApi<SocialResponse>('/v1/pages/social', params);
+  /* Read into one shape here, so nothing below has to know which spelling the API used. */
+  const data = useMemo(() => (raw.data ? readSocial(raw.data) : undefined), [raw.data]);
+  const res = useMemo(() => ({ ...raw, data }), [raw, data]);
   const [filter, setFilter] = useState<SocFilter>('all');
-  const { source } = useReference();
+  const { source, place } = useReference();
   const ig = source('instagram');
   const [half, setHalf] = useState<Half>('account');
+  /* A thread opens its case when the queue holds one for it. */
+  const cases = useCaseList({ source: 'instagram', from: view.from }).data;
+  const pool = useMemo(() => cases?.items ?? [], [cases]);
+  const { open, has, drawer } = useCaseDrawer(pool);
+  const scope = currentOf(useFilters().filters.scope);
+  const scopeName = scope.level === 'branch' ? place(scope.value!)?.name ?? scope.value : scope.value;
 
   return (
     <ApiPage res={res}>
@@ -52,10 +67,16 @@ export function SocialView() {
               ))}
             </div>
 
-            {half === 'mentions' ? <PostSentiments /> : <>
+            {half === 'mentions' ? <PostSentiments /> : half === 'images' ? <ImageAnalysis /> : <>
+            {scope.level !== 'all' && (
+              <div className="sim" style={{ marginBottom: 14 }}>
+                <span>⚠</span>
+                <span>Your scope is set to <b>{scopeName}</b>, but this page ignores it. Instagram comments carry no province, kota or branch, so there is nothing to narrow by. The scope still applies everywhere else.</span>
+              </div>
+            )}
             <div className="grid g-4 mb">
               <Metric k="Threads" v={S.threads} n={`${S.root_comments} comments, ${S.replies_captured} replies read`} />
-              <Metric k="Complaint threads" v={S.complaint_threads} n={`${S.conduct_level} at conduct level · ${S.pile_ons} ${plural(S.pile_ons, 'pile-on', 'pile-ons')}`} />
+              <Metric k="Complaint threads" v={S.complaint_threads} n={`${S.conduct_level} at conduct and regulatory level · ${S.pile_ons} ${plural(S.pile_ons, 'pile-on', 'pile-ons')}`} />
               <Metric k="Answered by the brand" v={S.brand_reply_rate_pct + '%'} n={`${S.unanswered} complaints never got a public reply`} />
               <Metric k="Median first response" v={S.median_first_response_h != null ? S.median_first_response_h + 'h' : '—'}
                 n={S.max_first_response_h != null ? `slowest answer took ${Math.round(S.max_first_response_h / 24)} days` : 'no brand answers yet'} />
@@ -67,15 +88,11 @@ export function SocialView() {
               <div className="panel">
                 <PanelHead title="Conversation threads" tag={`${list.length} of ${threads.length} shown`} />
                 <div className="p-note">A thread is the comment plus everything written under it, scored as one case. Replies from <b>{ig?.handle ?? 'the brand account'}</b> are marked. When customers keep piling in after the brand has replied, the thread stays open.</div>
-                <div className="chips">
-                  {CHIPS.map(([k, label]) => (
-                    <button key={k} className={filter === k ? 'on' : undefined} onClick={() => setFilter(k)}>
-                      {label} <span style={{ opacity: 0.6 }}>{counts[k] || 0}</span>
-                    </button>
-                  ))}
-                </div>
+                <Chips options={CHIPS} value={filter} onPick={setFilter} counts={counts} />
                 <div>
-                  {list.length ? list.map((t, i) => <ThreadCard key={t.id ?? i} t={t} />) : <div className="empty">No threads match this filter.</div>}
+                  {list.length
+                    ? list.map((t) => <ThreadCard key={t.id} t={t} onOpen={has(`ig_${t.id}`) ? () => open(`ig_${t.id}`) : undefined} />)
+                    : <div className="empty">No threads match this filter.</div>}
                 </div>
               </div>
               <div>
@@ -108,6 +125,7 @@ export function SocialView() {
                 <WeeklyChart weekly={d.weekly} />
               </div>
             </div>
+            {drawer}
             </>}
           </>
         );
@@ -127,10 +145,10 @@ function DataAlert({ threads, params }: { threads: SocialThread[]; params: Param
       <h4>Personal data of named staff is sitting on FIF&apos;s own post</h4>
       <p>
         {dox.length} {plural(dox.length, 'comment publishes', 'comments publish')} an employee&apos;s personal data and call on readers to report them.{' '}
-        {dup?.users?.length ? (
+        {dup && dupUsers(dup).length ? (
           <>
-            {dup.users.length} are word-for-word identical, posted from{' '}
-            {dup.users.map((u, i) => <Fragment key={u}>{i > 0 && ' and '}<b>@{u}</b></Fragment>)},{' '}
+            {dupUsers(dup).length} are word-for-word identical, posted from{' '}
+            {dupUsers(dup).map((u, i) => <Fragment key={u + i}>{i > 0 && ' and '}<b>@{u.replace(/^@/, '')}</b></Fragment>)},{' '}
             which is a coordinated posting pattern rather than an individual complaint.{' '}
           </>
         ) : null}
@@ -142,10 +160,10 @@ function DataAlert({ threads, params }: { threads: SocialThread[]; params: Param
   );
 }
 
-function ThreadCard({ t }: { t: SocialThread }) {
+function ThreadCard({ t, onOpen }: { t: SocialThread; onOpen?: () => void }) {
   const replies = t.replies ?? [];
   return (
-    <div className={t.priority === 'critical' ? 'thread crit' : 'thread'}>
+    <div className={`thread${t.priority === 'critical' ? ' crit' : ''}${onOpen ? ' clickable' : ''}`} onClick={onOpen}>
       <div className="th-head">
         <div className="body">
           <div className="th-meta">

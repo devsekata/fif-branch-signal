@@ -35,16 +35,29 @@ function applyTheme() {
   d.plugins.legend.labels.padding = 14;
 }
 
+/* A horizontal bar chart is only readable when the band each bar sits in is tall enough. Rather
+ * than hand-tuning a height per panel, every chart drawn on the y axis sizes its own container
+ * from how many categories it has. */
+function fitHeight(config: ChartConfig): number | undefined {
+  const o = config.options as { indexAxis?: string; scales?: { y?: { stacked?: boolean } } } | undefined;
+  const n = config.data.labels?.length ?? 0;
+  if (o?.indexAxis !== 'y' || !n) return undefined;
+  const series = o.scales?.y?.stacked ? 1 : config.data.datasets.length || 1;
+  const band = Math.max(22, Math.min(44, 14 + series * 9));
+  return Math.max(190, Math.min(680, n * band + 64));
+}
+
 /** A Chart.js canvas that is rebuilt whenever `config` changes identity; memoise the config. */
-export function ChartBox<T extends ChartType>({ config, size }: { config: ChartConfig<T>; size?: 'sm' | 'xs' | 'lg' }) {
+export function ChartBox<T extends ChartType>({ config, size }: { config: ChartConfig<T>; size?: 'sm' | 'xs' | 'lg' | 'donut' }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     applyTheme();
     const chart = new Chart(ref.current!, config);
     return () => chart.destroy();
   }, [config]);
+  const height = fitHeight(config as ChartConfig);
   return (
-    <div className={size ? `chart ${size}` : 'chart'}>
+    <div className={size ? `chart ${size}` : 'chart'} style={height ? { height } : undefined}>
       <canvas ref={ref} />
     </div>
   );

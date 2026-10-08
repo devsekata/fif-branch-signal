@@ -6,6 +6,11 @@ export const STAR = ['#C8322B', '#D8801F', '#B08F2A', '#8CCFC9', '#17857C'];
 export const IG = '#7A3A66';
 export const PRI: Record<string, string> = { critical: T.sig, high: T.warn, medium: T.hold, low: T.calm };
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** `2026-09` as `Sep '26`. */
+export const monthLabel = (month: string) => { const [y, mm] = month.split('-'); return `${MONTHS[+mm - 1]} '${y.slice(2)}`; };
+
+/** Neutral bar in every three-way split. */
+export const NEUTRAL = '#D3DFDD';
 
 export const riskColor = (risk: number) => (risk >= 45 ? T.sig : risk >= 25 ? T.warn : T.grow);
 export const sevColor = (sev: number) => (sev === 4 ? T.sig : sev === 3 ? T.warn : T.calm);
