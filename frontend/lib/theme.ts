@@ -11,6 +11,8 @@ export const monthLabel = (month: string) => { const [y, mm] = month.split('-');
 
 /** Neutral bar in every three-way split. */
 export const NEUTRAL = '#D3DFDD';
+/** Irrelevant/spam: the fourth sentiment category, darker than neutral so the two do not merge. */
+export const IRRELEVANT = '#7C9491';
 
 export const riskColor = (risk: number) => (risk >= 45 ? T.sig : risk >= 25 ? T.warn : T.grow);
 export const sevColor = (sev: number) => (sev === 4 ? T.sig : sev === 3 ? T.warn : T.calm);

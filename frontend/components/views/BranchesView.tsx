@@ -8,8 +8,8 @@ import { useApi } from '@/lib/api';
 import { toPoints, type BranchPoint } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
-import { MIN_N, NO_MIX, addMix, scoreColor, share } from '@/lib/signal';
-import { NEUTRAL, STAR, T, monthLabel, plural, riskColor } from '@/lib/theme';
+import { MIN_N, NO_MIX, addMix, readOf, scoreColor, share } from '@/lib/signal';
+import { IRRELEVANT, NEUTRAL, STAR, T, monthLabel, plural, riskColor } from '@/lib/theme';
 import type { BranchRow, BranchesResponse, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
 
 /** A league-table row: figures for the current view, beside what Google publishes about the branch. */
@@ -128,9 +128,9 @@ function ScopeSummary({ view, points }: { view: View; points: BranchPoint[] }) {
       <div className="grid g-4">
         {([
           ['Area', view.scopeName, `${points.length} ${plural(points.length, 'branch', 'branches')}`],
-          ['Reviews', mix.total.toLocaleString('en-US'), `${mix.good} positive · ${mix.neutral} neutral · ${mix.bad} negative`],
+          ['Reviews', readOf(mix).toLocaleString('en-US'), `${mix.good} positive · ${mix.neutral} neutral · ${mix.bad} negative · ${mix.irrelevant} irrelevant/spam`],
           ['Sentiment score', scored ? mix.score : '—', scored ? 'scored on the current window' : `under the ${MIN_N}-review minimum`],
-          ['Negative share', `${share(mix.bad, mix.total)}%`, 'of reviews in this area'],
+          ['Negative share', `${share(mix.bad, readOf(mix))}%`, 'of reviews in this area'],
         ] as const).map(([k, v, n]) => (
           <div key={k} className="metric"><div className="k">{k}</div><div className="v" style={{ fontSize: 21 }}>{v}</div><div className="n">{n}</div></div>
         ))}
@@ -160,7 +160,7 @@ function TopBottom({ view, points }: { view: View; points: BranchPoint[] }) {
                 <td className="n" style={{ width: 30 }}><span className="sub">#{rank(i)}</span></td>
                 <td>
                   <b>{p.place.name}</b>
-                  <div className="sub">{p.place.kecamatan ?? p.place.kota ?? p.place.city} · {p.mix.total.toLocaleString('en-US')} reviews</div>
+                  <div className="sub">{p.place.kecamatan ?? p.place.kota ?? p.place.city} · {readOf(p.mix).toLocaleString('en-US')} reviews</div>
                   <div style={{ marginTop: 5 }}><MixBar mix={p.mix} height={7} /></div>
                 </td>
                 <td className="n" style={{ width: 64 }}>
@@ -202,6 +202,7 @@ function AreaTrend({ view, months: loaded }: { view: View; months: SignalMonth[]
           { ...bar, label: 'Positive', data: months.map((m) => m.good), backgroundColor: T.grow },
           { ...bar, label: 'Neutral', data: months.map((m) => m.neutral), backgroundColor: NEUTRAL },
           { ...bar, label: 'Negative', data: months.map((m) => m.bad), backgroundColor: T.sig },
+          { ...bar, label: 'Irrelevant/spam', data: months.map((m) => m.irrelevant), backgroundColor: IRRELEVANT },
           { type: 'line', label: 'Score', yAxisID: 'y1', data: months.map((m) => m.score),
             borderColor: T.ink, borderWidth: 1.5, tension: 0.35, pointRadius: 0, spanGaps: true },
         ],
@@ -249,8 +250,8 @@ function AreaPanel({ view, points }: { view: View; points: BranchPoint[] }) {
               <tr key={b.id} className="clickable" onClick={() => router.push(branchHref(b.id))}>
                 <td><b>{b.name}</b></td>
                 <td>{b.kecamatan ?? b.kota ?? b.city}<div className="sub">{b.province ?? 'not placed'}</div></td>
-                <td className="n">{mix.total.toLocaleString('en-US')}</td>
-                <td><MixBar mix={mix} /><div className="sub">{mix.good} / {mix.neutral} / {mix.bad}</div></td>
+                <td className="n">{readOf(mix).toLocaleString('en-US')}</td>
+                <td><MixBar mix={mix} /><div className="sub">{mix.good} / {mix.neutral} / {mix.bad} / {mix.irrelevant}</div></td>
                 <td className="n">
                   <b style={{ color: scoreColor(mix.score, enough) }}>{enough ? mix.score : '—'}</b>
                   {!enough && <div className="sub">under {MIN_N}</div>}
@@ -264,7 +265,7 @@ function AreaPanel({ view, points }: { view: View; points: BranchPoint[] }) {
       {scored.length > 1 && (
         <AiNote title="What separates the ends of this list">
           {lo.place.name} scores {lo.mix.score} with {lo.mix.bad} negative out of {lo.mix.total} reviews, against {hi.place.name} at {hi.mix.score}.{' '}
-          Across this area {share(total.bad, total.total)}% of reviews are negative.{' '}
+          Across this area {share(total.bad, readOf(total))}% of reviews are negative and {share(total.irrelevant, readOf(total))}% are irrelevant or spam.{' '}
           {lo.mix.total < 40 ? 'The lowest scorer also has thin volume, so treat its position as provisional.' : 'Volumes are comparable, so the gap is about service rather than sample size.'}
         </AiNote>
       )}

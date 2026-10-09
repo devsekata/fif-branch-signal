@@ -2,23 +2,43 @@
 
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
 import { AiNote, ApiPage, Bridge, Chips, EmptyRow, Formula, Metric, MixBar, PanelHead } from '@/components/ui';
-import { useApi } from '@/lib/api';
+import { getJson, useApi } from '@/lib/api';
 import { NO_SCOPE, useFilters } from '@/lib/filters';
 import { GEO_METRICS, SCORE_RAMP, toAreas, toPoints, type Area, type BranchPoint, type GeoMetric, type RegionCollection } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import { pickScope, useView, type AreaLevel, type View } from '@/lib/scope';
-import { MIN_N, NO_MIX, addMix, scoreColor, share } from '@/lib/signal';
-import { NEUTRAL, T, plural } from '@/lib/theme';
+import { MIN_N, NO_MIX, addMix, readOf, scoreColor, share } from '@/lib/signal';
+import { IRRELEVANT, NEUTRAL, T, plural } from '@/lib/theme';
 import type { SignalBranchesResponse } from '@/lib/types';
 
 const GeoMap = dynamic(() => import('@/components/GeoMap'), {
   ssr: false,
   loading: () => <div className="geo-map geo-wait">Loading map…</div>,
 });
+
+/* Outlines shipped with the dashboard (public/geo), taken from the v15 prototype: every province,
+ * and the kabupaten/kota of the three provinces it covered. The master tables hold Jakarta Barat
+ * only, so without these the national view would be one province wide and nothing outside it
+ * could be drawn as an area. A province is drawn from the shipped outline, because the master
+ * tables merge it from whichever kecamatan they hold — DKI Jakarta would come out as Jakarta Barat
+ * alone. For a kota the master outline is the one used where it exists. */
+function useOutlines(file: 'province' | 'kota' | null): RegionCollection | undefined {
+  const [got, setGot] = useState<{ file: string; data: RegionCollection } | null>(null);
+  useEffect(() => {
+    if (!file) return;
+    let live = true;
+    getJson<RegionCollection>(`/geo/${file}.json`).then((data) => { if (live) setGot({ file, data }); }, () => { /* the map falls back to the master outlines alone */ });
+    return () => { live = false; };
+  }, [file]);
+  return got && got.file === file ? got.data : undefined;
+}
+
+/** "Kota Jakarta Barat" and "Jakarta Barat" are the same place under two spellings. */
+const bare = (name: string) => name.replace(/^(kota|kabupaten|kab\.?)\s+/i, '').toLowerCase();
 
 const LEVEL_PLURAL: Record<AreaLevel, string> = { province: 'Provinces', kota: 'Kota and kabupaten', kecamatan: 'Kecamatan' };
 
@@ -48,15 +68,39 @@ function Geography({ view, data }: { view: View; data: SignalBranchesResponse })
   const kecamatan = useApi<RegionCollection>(level === 'kecamatan' ? '/v1/areas/kecamatan' : null);
   const boundaries = level === 'province' ? provinsi : level === 'kota' ? kabkota : kecamatan;
 
-  const features = useMemo(() => (boundaries.data?.features ?? []).filter((f) =>
-    level === 'province' ? true : level === 'kota' ? f.properties.provinsi === sel.province : f.properties.kabkota === sel.kota,
-  ), [boundaries.data, level, sel.province, sel.kota]);
+  const shipped = useOutlines(level === 'kecamatan' ? null : level);
+
+  const features = useMemo(() => {
+    const master = (boundaries.data?.features ?? []).filter((f) =>
+      level === 'province' ? true : level === 'kota' ? f.properties.provinsi === sel.province : f.properties.kabkota === sel.kota);
+    if (level === 'kecamatan') return master;
+    const ours = (shipped?.features ?? []).filter((f) => level === 'province' || f.properties.provinsi === sel.province);
+    /* One outline per area: the preferred set, and the other one wherever it has nothing. */
+    const [first, rest] = level === 'province' ? [ours, master] : [master, ours];
+    const have = new Set(first.map((f) => bare(f.properties.nama)));
+    return [...first, ...rest.filter((f) => !have.has(bare(f.properties.nama)))];
+  }, [boundaries.data, shipped, level, sel.province, sel.kota]);
 
   const points = useMemo(() => toPoints(data), [data]);
   const placed = useMemo(() => points.filter((p) => p.place[level]), [points, level]);
   const unplaced = useMemo(() => (level === 'province' ? points.filter((p) => !p.place.province) : []), [points, level]);
   const areas = useMemo(() => toAreas(data, level), [data, level]);
   const byName = useMemo(() => new Map(areas.map((a) => [a.name, a])), [areas]);
+
+  /* One representation per level. Down to kota the polygons carry the data. At kecamatan level
+   * they become context and the branches are drawn as points — colouring a whole kecamatan for two
+   * branches would make the largest area look like the worst one. An area with no boundary in the
+   * master tables is drawn as its branches' points at any level, and the note says so. */
+  const outline = level === 'kecamatan';
+  const drawn = useMemo(() => new Set(features.map((f) => f.properties.nama)), [features]);
+  const markers = useMemo(() => {
+    const located = points.filter((p) => p.place.lat != null && p.place.lng != null);
+    if (!boundaries.data) return [];
+    return outline ? located : located.filter((p) => !p.place[level] || !drawn.has(p.place[level]!));
+  }, [points, outline, level, drawn, boundaries.data]);
+  const noBoundary = useMemo(() => [...new Set(markers.map((p) => p.place[level]).filter((n): n is string => !!n && !drawn.has(n)))], [markers, level, drawn]);
+  const ranked = useMemo(() => points.filter((p) => p.enough).length, [points]);
+  const openBranch = useCallback((id: string) => router.push(branchHref(id)), [router]);
 
   const drill = useCallback((name: string) => {
     setFilter('scope', pickScope(level, name, places));
@@ -94,25 +138,24 @@ function Geography({ view, data }: { view: View; data: SignalBranchesResponse })
         <div className="p-head"><h3>{title}</h3><Chips flush options={GEO_METRICS} value={metric} onPick={setMetric} /></div>
         <div className="p-note">
           {focus && <><b style={{ color: 'var(--ink)' }}>Scoped to {view.scopeName}.</b> The map stays at kecamatan level so you can see it in context — everything outside the scope is dimmed, not hidden. </>}
-          {level === 'kecamatan'
-            ? 'Branches carry no coordinates yet, so they cannot be drawn as points. Each kecamatan is coloured by the branches whose address places them inside it; open one to see the branches themselves.'
-            : 'Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise.'}
-          {unplaced.length > 0 && ` ${unplaced.length} ${plural(unplaced.length, 'branch is', 'branches are')} not on the map: the address names no kecamatan the master tables hold.`}
+          {outline
+            ? 'At kecamatan level the polygons stop carrying the data and become context. Branches are drawn as points: colour is sentiment, size is review volume. Colouring a whole kecamatan for two branches would make the largest area look like the worst one.'
+            : 'Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise. Click an area that holds branches to drill in.'}
+          {noBoundary.length > 0 && ` No boundary geometry for ${noBoundary.join(', ')} in the master tables, so ${plural(noBoundary.length, 'its', 'their')} branches are drawn as points instead.`}
+          {unplaced.length > 0 && ` ${unplaced.length} ${plural(unplaced.length, 'branch has', 'branches have')} no area on record yet and ${plural(unplaced.length, 'is', 'are')} left off this level.`}
         </div>
         {boundaries.error
           ? <div className="empty-note">Boundaries could not be loaded. {boundaries.error}</div>
-          : boundaries.data && !features.length
-          ? <div className="empty-note">No boundary geometry for this area in the master tables, so there is nothing to draw. Its branches are listed below.</div>
-          : <GeoMap features={features} areas={byName} metric={metric} national={level === 'province'} focus={focus}
-              hint={level === 'kecamatan' ? 'Click to open its branches' : 'Click to drill in'} onPick={drill} />}
-        <Legend metric={metric} />
+          : <GeoMap features={features} areas={byName} metric={metric} national={level === 'province'} outline={outline}
+              points={markers} ranked={ranked} focus={focus} onPick={drill} onBranch={openBranch} />}
+        <Legend metric={metric} points={markers.length > 0} polygons={!outline && features.length > 0} />
         <MapNote areas={areas} level={level} />
         <div style={{ height: 16 }} />
       </div>
 
       <div className="grid g-2 mb">
         <div className="panel">
-          <PanelHead title={`Review distribution — ${LEVEL_PLURAL[level].toLowerCase()}`} tag="positive · neutral · negative" />
+          <PanelHead title={`Review distribution — ${LEVEL_PLURAL[level].toLowerCase()}`} tag="positive · neutral · negative · irrelevant/spam" />
           <div className="p-note">A map is good at where, bad at how much. This is the same areas as columns, so volumes can actually be compared.</div>
           <DistChart areas={areas} />
         </div>
@@ -132,7 +175,8 @@ function Geography({ view, data }: { view: View; data: SignalBranchesResponse })
       <div className="panel">
         <PanelHead title="Where each branch was placed" tag={`${placed.length} of ${points.length} branches placed`} />
         <div className="p-note">
-          Branches carry no coordinates, so each is matched on the &ldquo;Kec.&rdquo; part of its address against the master kecamatan, and only when the address is in the same city.
+          Each branch is matched on the &ldquo;Kec.&rdquo; part of its address against the master kecamatan, and only when the address is in the same city.
+          Where the master tables do not hold that kecamatan, the area Google publishes for the place is used, and the branch is drawn as a point with no boundary behind it.
         </div>
         <PlacedTable points={points} />
       </div>
@@ -146,34 +190,50 @@ function GeoMetrics({ areas, points }: { areas: Area[]; points: BranchPoint[] })
   const worst = areas.filter((a) => a.enough).sort((a, b) => a.mix.score! - b.mix.score!)[0];
   return (
     <div className="grid g-4 mb">
-      <Metric k="Areas in view" v={areas.length} n={`${points.length} branches, ${mix.total.toLocaleString('en-US')} reviews`} />
+      <Metric k="Areas in view" v={areas.length} n={`${points.length} branches, ${readOf(mix).toLocaleString('en-US')} reviews`} />
       <Metric k="Sentiment score" v={mix.score ?? '—'} n="across everything in this view" />
-      <Metric k="Positive / negative" v={`${mix.good.toLocaleString('en-US')} / ${mix.bad.toLocaleString('en-US')}`} n={`${share(mix.bad, mix.total)}% of reviews are negative`} />
+      <Metric k="Positive / negative" v={`${mix.good.toLocaleString('en-US')} / ${mix.bad.toLocaleString('en-US')}`} n={`${share(mix.bad, readOf(mix))}% negative, ${share(mix.irrelevant, readOf(mix))}% irrelevant/spam`} />
       <Metric k="Lowest scoring" v={worst?.name ?? '—'} n={worst ? `score ${worst.mix.score}, ${worst.mix.bad} negative reviews` : 'nothing scored yet'} />
     </div>
   );
 }
 
-function Legend({ metric }: { metric: GeoMetric }) {
-  if (metric === 'score') {
+/** What a branch point says: colour is always the sentiment score, size the number of reviews read. */
+function PointKey() {
+  return (
+    <>
+      <span className="pt-key">
+        <b style={{ color: 'var(--ink)' }}>Branch</b>
+        {[5, 9, 14].map((r) => <i key={r} style={{ width: r * 2, height: r * 2 }} />)}
+        <span>few &nbsp;→&nbsp; many reviews</span>
+      </span>
+      <span className="pt-key"><i className="thin" style={{ width: 14, height: 14 }} />under {MIN_N} reviews, not scored</span>
+    </>
+  );
+}
+
+function Legend({ metric, points, polygons }: { metric: GeoMetric; points: boolean; polygons: boolean }) {
+  if (metric === 'score' || !polygons) {
     return (
       <div className="legend">
         <span><b style={{ color: 'var(--ink)' }}>Sentiment score</b></span>
         <span className="ramp">{SCORE_RAMP.map((c) => <i key={c} style={{ background: c }} />)}</span>
         <span>0 &nbsp;→&nbsp; 100</span>
-        <span><span className="swatch hatch" />under {MIN_N} reviews, not scored</span>
+        {polygons && <span><span className="swatch hatch" />under {MIN_N} reviews, not scored</span>}
+        {points && <PointKey />}
         <Formula />
       </div>
     );
   }
-  const rgb = metric === 'bad' || metric === 'unanswered' ? '200,50,43' : metric === 'good' ? '31,140,132' : '19,89,85';
-  const label = { bad: 'Negative reviews', good: 'Positive reviews', total: 'Review volume', unanswered: 'Unanswered complaints' }[metric];
+  const rgb = metric === 'bad' || metric === 'unanswered' ? '200,50,43' : metric === 'good' ? '31,140,132' : metric === 'irrelevant' ? '84,104,101' : '19,89,85';
+  const label = { bad: 'Negative reviews', good: 'Positive reviews', irrelevant: 'Irrelevant/spam reviews', total: 'Review volume', unanswered: 'Unanswered complaints' }[metric];
   return (
     <div className="legend">
       <span><b style={{ color: 'var(--ink)' }}>{label}</b></span>
       <span className="ramp">{[0.15, 0.45, 0.75, 0.95].map((a) => <i key={a} style={{ background: `rgba(${rgb},${a})` }} />)}</span>
       <span>low &nbsp;→&nbsp; high</span>
       <span><span className="swatch hatch" />no branch in this area</span>
+      {points && <PointKey />}
     </div>
   );
 }
@@ -197,7 +257,7 @@ function MapNote({ areas, level }: { areas: Area[]; level: AreaLevel }) {
 }
 
 function DistChart({ areas }: { areas: Area[] }) {
-  const rows = useMemo(() => [...areas].sort((a, b) => b.mix.total - a.mix.total).slice(0, 14), [areas]);
+  const rows = useMemo(() => [...areas].sort((a, b) => readOf(b.mix) - readOf(a.mix)).slice(0, 14), [areas]);
   const config = useMemo((): ChartConfig<'bar'> => {
     const bar = { stack: 'a', borderRadius: 3 };
     return {
@@ -208,6 +268,7 @@ function DistChart({ areas }: { areas: Area[] }) {
           { ...bar, label: 'Positive', data: rows.map((r) => r.mix.good), backgroundColor: T.grow },
           { ...bar, label: 'Neutral', data: rows.map((r) => r.mix.neutral), backgroundColor: NEUTRAL },
           { ...bar, label: 'Negative', data: rows.map((r) => r.mix.bad), backgroundColor: T.sig },
+          { ...bar, label: 'Irrelevant/spam', data: rows.map((r) => r.mix.irrelevant), backgroundColor: IRRELEVANT },
         ],
       },
       options: {
@@ -290,8 +351,8 @@ function RankTable({ areas, level, onPick }: { areas: Area[]; level: AreaLevel; 
             <tr key={a.name} className="clickable" onClick={() => onPick(a.name)}>
               <td><b>{a.name}</b><div className="sub">{level === 'kecamatan' ? 'click to open its branches' : 'click to drill in'}</div></td>
               <td className="n">{a.branches}</td>
-              <td className="n">{a.mix.total.toLocaleString('en-US')}</td>
-              <td><MixBar mix={a.mix} /><div className="sub">{a.mix.good} / {a.mix.neutral} / {a.mix.bad}</div></td>
+              <td className="n">{readOf(a.mix).toLocaleString('en-US')}</td>
+              <td><MixBar mix={a.mix} /><div className="sub">{a.mix.good} / {a.mix.neutral} / {a.mix.bad} / {a.mix.irrelevant}</div></td>
               <td className="n">
                 <b style={{ color: scoreColor(a.mix.score, a.enough) }}>{a.enough ? a.mix.score : '—'}</b>
                 {!a.enough && <div className="sub">under {MIN_N}</div>}
@@ -311,20 +372,21 @@ function PlacedTable({ points }: { points: BranchPoint[] }) {
     <div className="t-scroll" style={{ maxHeight: 380 }}>
       <table>
         <thead>
-          <tr><th>Branch</th><th>Kecamatan in the address</th><th>Placed in</th><th className="n">Reviews</th><th className="n">Sentiment</th><th className="n">Negative</th><th className="n">Never answered</th></tr>
+          <tr><th>Branch</th><th>Kecamatan in the address</th><th>Placed in</th><th className="n">Reviews</th><th className="n">Sentiment</th><th className="n">Negative</th><th className="n">Irrelevant/spam</th><th className="n">Never answered</th></tr>
         </thead>
         <tbody>
           {points.length ? points.map(({ place: b, mix, enough, unanswered }) => (
             <tr key={b.id} className="clickable" onClick={() => router.push(branchHref(b.id))}>
               <td><b>{b.name}</b><div className="sub">{b.address ?? b.city}</div></td>
               <td>{b.stated_kecamatan ?? '—'}</td>
-              <td>{b.kecamatan ?? <span style={{ color: 'var(--ink-3)' }}>not placed</span>}</td>
-              <td className="n">{mix.total}</td>
+              <td>{b.kecamatan ?? <span style={{ color: 'var(--ink-3)' }}>not placed</span>}{b.kecamatan && <div className="sub">{[b.kota, b.province].filter(Boolean).join(', ')}</div>}</td>
+              <td className="n">{readOf(mix)}</td>
               <td className="n"><b style={{ color: scoreColor(mix.score, enough) }}>{enough ? mix.score : '—'}</b></td>
               <td className="n">{mix.bad}</td>
+              <td className="n">{mix.irrelevant || '—'}</td>
               <td className="n">{unanswered}</td>
             </tr>
-          )) : <EmptyRow colSpan={7}>No branch in this scope.</EmptyRow>}
+          )) : <EmptyRow colSpan={8}>No branch in this scope.</EmptyRow>}
         </tbody>
       </table>
     </div>

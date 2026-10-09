@@ -12,8 +12,8 @@ import { branchHref } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import { praiseInScope, topicRows, type PraiseDrivers } from '@/lib/topics';
 import { LEVEL_LABEL, pickScope, useView, type View } from '@/lib/scope';
-import { MIN_N, share, type Mix } from '@/lib/signal';
-import { IG, NEUTRAL, PRI, T, clip, monthLabel, plural, riskColor, sevColor } from '@/lib/theme';
+import { MIN_N, readOf, share, type Mix } from '@/lib/signal';
+import { IG, IRRELEVANT, NEUTRAL, PRI, T, clip, monthLabel, plural, riskColor, sevColor } from '@/lib/theme';
 import type { CasesResponse, ComplaintsResponse, SignalBranchesResponse, SignalOverviewResponse } from '@/lib/types';
 
 type Sig = SignalOverviewResponse;
@@ -72,6 +72,8 @@ function useWhere(view: View) {
 }
 
 function Hero({ view, m }: { view: View; m: Mix }) {
+  /* Shares are of everything read, so the four categories add up to 100. The score is on the three that are opinions. */
+  const all = readOf(m);
   const where = useWhere(view);
   const coverage = useReference().source('google');
   const cov = coverage?.universe ? ((100 * coverage.rows) / coverage.universe).toFixed(1) : null;
@@ -80,19 +82,19 @@ function Hero({ view, m }: { view: View; m: Mix }) {
     <div className="hero">
       <div className="dw-sub" style={{ marginBottom: 6 }}><span>How customers are talking about FIF right now</span></div>
       <div className="lede">
-        {m.total ? (
+        {all ? (
           <>
-            <em style={{ color: m.score! >= 55 ? 'var(--grow)' : 'var(--sig)' }}>{verdict}</em> {where} —{' '}
-            {share(m.good, m.total)}% positive, {share(m.neutral, m.total)}% neutral, {share(m.bad, m.total)}% negative{' '}
-            across {m.total.toLocaleString('en-US')} reviews and comments read.
+            {m.score !== null && <><em style={{ color: m.score >= 55 ? 'var(--grow)' : 'var(--sig)' }}>{verdict}</em> {where} —{' '}</>}
+            {share(m.good, all)}% positive, {share(m.neutral, all)}% neutral, {share(m.bad, all)}% negative, {share(m.irrelevant, all)}% irrelevant/spam{' '}
+            across {all.toLocaleString('en-US')} reviews and comments read.
           </>
         ) : 'Nothing read in this view.'}
       </div>
       <div className="stat-rail" style={{ borderTop: 'none', paddingTop: 0 }}>
-        <Stat k="Sentiment score" v={m.score ?? '—'} n="(positive − negative) ÷ total" bad={m.score !== null && m.score < 55} />
-        <Stat k="Read" v={m.total.toLocaleString('en-US')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
-        <Stat k="Neutral share" v={share(m.neutral, m.total) + '%'} n="wordless ratings, not opinions" />
-        <Stat k="Negative share" v={share(m.bad, m.total) + '%'} n={`${m.bad.toLocaleString('en-US')} reviews and comments`} bad={share(m.bad, m.total) > 15} />
+        <Stat k="Sentiment score" v={m.score ?? '—'} n="(positive − negative) ÷ total, irrelevant/spam left out" bad={m.score !== null && m.score < 55} />
+        <Stat k="Read" v={all.toLocaleString('en-US')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
+        <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={`${m.irrelevant.toLocaleString('en-US')} set aside by the relevance check`} />
+        <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('en-US')} reviews and comments`} bad={share(m.bad, all) > 15} />
       </div>
       <div style={{ borderTop: '1px solid var(--rule-2)', marginTop: 18, paddingTop: 14 }}>
         <MixDonut m={m} />
@@ -102,12 +104,13 @@ function Hero({ view, m }: { view: View; m: Mix }) {
 }
 
 function MixDonut({ m }: { m: Mix }) {
+  const all = readOf(m);
   const config = useMemo((): ChartConfig<'doughnut'> => {
-    const data = [m.good, m.neutral, m.bad];
-    const colors = [T.grow, '#CBD7D5', T.sig];
+    const data = [m.good, m.neutral, m.bad, m.irrelevant];
+    const colors = [T.grow, '#CBD7D5', T.sig, IRRELEVANT];
     return {
       type: 'doughnut',
-      data: { labels: ['Positive', 'Neutral', 'Negative'], datasets: [{ data, backgroundColor: colors, borderColor: '#FFFFFF', borderWidth: 3, hoverOffset: 5 }] },
+      data: { labels: ['Positive', 'Neutral', 'Negative', 'Irrelevant/spam'], datasets: [{ data, backgroundColor: colors, borderColor: '#FFFFFF', borderWidth: 3, hoverOffset: 5 }] },
       options: {
         responsive: true, maintainAspectRatio: false, cutout: '58%',
         plugins: {
@@ -116,17 +119,17 @@ function MixDonut({ m }: { m: Mix }) {
             labels: {
               padding: 12, font: { size: 11.5 },
               generateLabels: (ch) => (ch.data.labels as string[]).map((l, i) => ({
-                text: `${l} — ${data[i].toLocaleString('en-US')} (${share(data[i], m.total)}%)`,
+                text: `${l} — ${data[i].toLocaleString('en-US')} (${share(data[i], all)}%)`,
                 fillStyle: colors[i], strokeStyle: colors[i], lineWidth: 0, pointStyle: 'circle' as const, index: i,
               })),
             },
           },
-          tooltip: { callbacks: { label: (c) => `${c.parsed.toLocaleString('en-US')} of ${m.total.toLocaleString('en-US')} (${share(c.parsed, m.total)}%)` } },
+          tooltip: { callbacks: { label: (c) => `${c.parsed.toLocaleString('en-US')} of ${all.toLocaleString('en-US')} (${share(c.parsed, all)}%)` } },
         },
       },
     };
-  }, [m]);
-  if (!m.total) return <div className="empty-note">Nothing read in this view.</div>;
+  }, [m, all]);
+  if (!all) return <div className="empty-note">Nothing read in this view.</div>;
   return <ChartBox config={config} size="donut" />;
 }
 
@@ -268,7 +271,7 @@ function BestWorst({ view, res }: { view: View; res: ApiResult<SignalBranchesRes
         tooltip: {
           callbacks: {
             label: (c) => `score ${c.parsed.x}`,
-            afterBody: (c) => { const m = picked[c[0].dataIndex].mix; return `${m.total.toLocaleString('en-US')} reviews — ${m.good} positive, ${m.neutral} neutral, ${m.bad} negative`; },
+            afterBody: (c) => { const m = picked[c[0].dataIndex].mix; return `${readOf(m).toLocaleString('en-US')} reviews — ${m.good} positive, ${m.neutral} neutral, ${m.bad} negative, ${m.irrelevant} irrelevant/spam`; },
           },
         },
       },
@@ -316,7 +319,7 @@ function BestWorst({ view, res }: { view: View; res: ApiResult<SignalBranchesRes
 
 /* ---------- how sentiment is moving ---------- */
 type TrendMode = 'mix' | 'problem';
-const TREND_MODES: [TrendMode, string][] = [['mix', 'Positive · neutral · negative'], ['problem', 'Complaints and rating']];
+const TREND_MODES: [TrendMode, string][] = [['mix', 'Positive · neutral · negative · irrelevant'], ['problem', 'Complaints and rating']];
 
 function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
   const [mode, setMode] = useState<TrendMode>('mix');
@@ -332,6 +335,7 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
             { ...bar, label: 'Positive', data: months.map((m) => m.good), backgroundColor: T.grow },
             { ...bar, label: 'Neutral', data: months.map((m) => m.neutral), backgroundColor: NEUTRAL },
             { ...bar, label: 'Negative', data: months.map((m) => m.bad), backgroundColor: T.sig },
+            { ...bar, label: 'Irrelevant/spam', data: months.map((m) => m.irrelevant), backgroundColor: IRRELEVANT },
             { type: 'line', label: 'Sentiment score', yAxisID: 'y1', data: months.map((m) => m.score),
               borderColor: T.ink, borderWidth: 1.6, tension: 0.35, pointRadius: 0, pointHoverRadius: 4, spanGaps: true },
           ],
@@ -378,7 +382,7 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
       <div className="p-head"><h3>How sentiment is moving</h3><Chips flush options={TREND_MODES} value={mode} onPick={setMode} /></div>
       <div className="p-note">
         {mode === 'mix'
-          ? 'Every review and comment read, split three ways. The line is the sentiment score for that month — it moves even when volume does not.'
+          ? 'Every review and comment read, split four ways; irrelevant/spam stays out of the score. The line is the sentiment score for that month — it moves even when volume does not.'
           : 'Complaint volume against the average rating. Watch where the bars rise while the line holds steady — that gap is a collection campaign covering live complaints.'}
       </div>
       {months.length ? <ChartBox config={config} /> : <div className="empty-note">No reviews or comments in this period.</div>}

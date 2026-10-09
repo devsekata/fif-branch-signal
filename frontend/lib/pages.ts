@@ -1,4 +1,4 @@
-export type PageId = 'overview' | 'geography' | 'branches' | 'branch' | 'complaints' | 'escalations' | 'integrity' | 'social' | 'method' | 'ingest' | 'settings';
+export type PageId = 'overview' | 'geography' | 'branches' | 'branch' | 'complaints' | 'escalations' | 'integrity' | 'listings' | 'social' | 'method' | 'ingest' | 'settings';
 export type FilterKey = 'branch' | 'period' | 'source';
 
 /** What the scope control means on a page (fif_metric_spec.md §6.4).
@@ -33,6 +33,8 @@ export const PAGES: PageDef[] = [
     sub: 'Scored, ranked and still unanswered. Assign an owner, reply in public, close the case.' },
   { id: 'integrity', href: '/integrity', filters: ['period', 'source'], scope: 'partial', group: 'Diagnose', label: 'Review integrity', title: 'Review integrity',
     sub: 'Whether the rating can be trusted as a satisfaction signal, and how much of it was collected at the counter.' },
+  { id: 'listings', href: '/listings', filters: ['branch'], scope: 'full', group: 'Diagnose', label: 'Listing integrity', title: 'Listing integrity',
+    sub: 'Google listings reconciled against the branch master: duplicates, listings FIF does not manage, and branches with no listing at all.' },
   { id: 'social', href: '/social', filters: ['period'], scope: 'none', group: 'Act', label: 'Social listening', title: 'Social listening',
     sub: 'Instagram comment threads on the official account, scored on the same ladder as branch reviews.' },
   { id: 'method', href: '/method', filters: [], scope: 'off', group: 'Reference', label: 'Method & limits', title: 'Method and limits',

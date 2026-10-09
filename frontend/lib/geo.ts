@@ -31,13 +31,14 @@ export interface Area {
   unanswered: number;
 }
 
-const mixOf = ({ good, neutral, bad, total, score }: Mix): Mix => ({ good, neutral, bad, total, score });
+const mixOf = ({ good, neutral, bad, total, score, irrelevant }: Mix): Mix => ({ good, neutral, bad, total, score, irrelevant: irrelevant ?? 0 });
 
 export function toPoints(d: SignalBranchesResponse | undefined): BranchPoint[] {
   return (d?.branches ?? []).map((b) => ({
     place: {
       id: b.branch_id, name: b.branch, city: b.city, address: b.address,
       province: b.province, kota: b.kota, kecamatan: b.kecamatan, stated_kecamatan: b.stated_kecamatan,
+      lat: b.lat, lng: b.lng, postal_code: b.postal_code,
     },
     mix: mixOf(b), enough: b.enough, rank: b.rank, unanswered: b.unanswered, row: b,
   }));
@@ -50,9 +51,9 @@ export function toAreas(d: SignalBranchesResponse | undefined, level: AreaLevel)
 }
 
 /* ---------- colour ---------- */
-export type GeoMetric = 'score' | 'bad' | 'good' | 'total' | 'unanswered';
+export type GeoMetric = 'score' | 'bad' | 'good' | 'irrelevant' | 'total' | 'unanswered';
 export const GEO_METRICS: [GeoMetric, string][] = [
-  ['score', 'Sentiment score'], ['bad', 'Negative'], ['good', 'Positive'], ['total', 'Volume'], ['unanswered', 'Unanswered'],
+  ['score', 'Sentiment score'], ['bad', 'Negative'], ['good', 'Positive'], ['irrelevant', 'Irrelevant/spam'], ['total', 'Volume'], ['unanswered', 'Unanswered'],
 ];
 export const SCORE_RAMP = ['#C8322B', '#D8801F', '#B08F2A', '#7FB8AE', '#1F8C84'];
 
@@ -67,6 +68,6 @@ export function metricColor(a: { mix: Mix; enough: boolean; unanswered: number }
     return v >= 80 ? SCORE_RAMP[4] : v >= 65 ? SCORE_RAMP[3] : v >= 50 ? SCORE_RAMP[2] : v >= 35 ? SCORE_RAMP[1] : SCORE_RAMP[0];
   }
   const t = Math.min(1, (v ?? 0) / Math.max(1, max));
-  const rgb = metric === 'bad' || metric === 'unanswered' ? '200,50,43' : metric === 'good' ? '31,140,132' : '19,89,85';
+  const rgb = metric === 'bad' || metric === 'unanswered' ? '200,50,43' : metric === 'good' ? '31,140,132' : metric === 'irrelevant' ? '84,104,101' : '19,89,85';
   return `rgba(${rgb},${0.15 + 0.75 * t})`;
 }

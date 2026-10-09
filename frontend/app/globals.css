@@ -598,3 +598,25 @@ tr.clickable,.thread.clickable{cursor:pointer}
 .img-items{margin-top:8px;font-size:12px}
 .img-items td{padding:7px 8px 7px 0;border-bottom:1px solid var(--rule-2);vertical-align:top}
 .img-items td:first-child{width:1%;white-space:nowrap}
+/* branch points in the map legend */
+.pt-key{display:inline-flex;align-items:center;gap:6px}
+.pt-key i{display:inline-block;border-radius:50%;background:#7FB8AE;border:1.5px solid #0B2320;flex:none}
+.pt-key i.thin{background:#fff;border:1.5px dashed #8FA5A3}
+/* listing integrity */
+.lst-search{width:100%;font-family:inherit;font-size:12.5px;padding:9px 12px;border-radius:var(--r-sm);
+  border:1px solid var(--rule);background:var(--card);color:var(--ink)}
+.lst-search:focus{outline:none;border-color:var(--deep)}
+.lst-code{font-size:10.8px;color:var(--ink-2);max-width:150px;overflow-wrap:anywhere}
+.st-pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;
+  padding:3px 9px;border-radius:20px;white-space:nowrap;border:1px solid transparent}
+.st-matched{background:#E7F3F1;color:#136E68;border-color:#C6E6E1}
+.st-duplicate{background:#FBEAE8;color:#9B2B24;border-color:#F2CFCB}
+.st-unrecognised{background:#FCF0E3;color:#8E5310;border-color:#F4DFC5}
+.st-no_listing{background:#EFF1F5;color:#4A5568;border-color:#DCE1E8}
+.ev{font-size:10.8px;color:var(--ink-3);line-height:1.5}
+.split-bar{display:flex;height:30px;border-radius:var(--r-sm);overflow:hidden;background:var(--rule-2)}
+.split-bar i{display:flex;align-items:center;justify-content:center;font-style:normal;
+  font-size:11.5px;font-weight:600;color:#fff;min-width:2px}
+.split-key{display:flex;flex-wrap:wrap;gap:7px 16px;margin-top:10px;font-size:11px;color:var(--ink-2)}
+.split-key span{display:flex;align-items:center;gap:5px}
+.split-key i{width:9px;height:9px;border-radius:2px;flex:none}
