@@ -7,7 +7,7 @@ import { page, type PageId } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import type { SortState } from '@/lib/scope';
 import type { Mix } from '@/lib/signal';
-import { NEUTRAL, T } from '@/lib/theme';
+import { IRRELEVANT, NEUTRAL, T } from '@/lib/theme';
 import type { Channel, Priority } from '@/lib/types';
 
 export function Rating({ stars }: { stars: number }) {
@@ -69,15 +69,17 @@ export function Chips<V extends string>({ options, value, onPick, counts, flush 
   );
 }
 
-/** Positive, neutral, negative as one bar, so the mix reads before the numbers do. */
+/** Positive, neutral, negative and irrelevant/spam as one bar, so the mix reads before the numbers do. */
 export function MixBar({ mix, height = 9 }: { mix: Mix; height?: number }) {
-  const w = (v: number) => `${mix.total ? (100 * v) / mix.total : 0}%`;
+  const all = mix.total + mix.irrelevant;
+  const w = (v: number) => `${all ? (100 * v) / all : 0}%`;
   return (
     <div className="sent-bar" style={{ height }} role="img"
-      aria-label={`${mix.good} positive, ${mix.neutral} neutral, ${mix.bad} negative of ${mix.total}`}>
+      aria-label={`${mix.good} positive, ${mix.neutral} neutral, ${mix.bad} negative, ${mix.irrelevant} irrelevant or spam of ${all}`}>
       <i style={{ width: w(mix.good), background: T.grow }} />
       <i style={{ width: w(mix.neutral), background: NEUTRAL }} />
       <i style={{ width: w(mix.bad), background: T.sig }} />
+      <i style={{ width: w(mix.irrelevant), background: IRRELEVANT }} />
     </div>
   );
 }
@@ -106,7 +108,9 @@ const BRIDGE: Partial<Record<PageId, { q: string; d: string; to: PageId }>> = {
     d: 'Complaint themes groups the text by category and severity across both channels.', to: 'complaints' },
   complaints: { q: 'Can the rating even be trusted as a satisfaction signal?',
     d: 'Review integrity shows how much of the score was collected at the counter rather than written at home.', to: 'integrity' },
-  integrity: { q: 'Which cases need a person this week?',
+  integrity: { q: 'And can the branch list itself be trusted?',
+    d: 'Listing integrity reconciles what is on Google against the branch master: duplicates splitting the reviews, listings nobody manages, and branches with no listing at all.', to: 'listings' },
+  listings: { q: 'Which cases need a person this week?',
     d: 'Escalations ranks every open case across both channels on one criticality score.', to: 'escalations' },
 };
 

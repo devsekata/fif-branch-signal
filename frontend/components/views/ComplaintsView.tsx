@@ -79,7 +79,7 @@ function ClassificationCard({ view, topics, praise }: { view: View; topics: Topi
   return (
     <div className="panel mb">
       <PanelHead title="Review classification — every category" tag={`${rows.length} categories`} />
-      <div className="p-note">Every tagged category on one axis, with positive, neutral and negative side by side. Neutral categories — questions about promos, requirements, payment channels — are in the taxonomy but are not tagged by the API yet, so that band is empty.</div>
+      <div className="p-note">Every tagged category on one axis, with positive, neutral and negative side by side. Neutral categories — questions about promos, requirements, payment channels — are in the taxonomy but are not tagged by the API yet, so that band is empty.{sig && sig.mix.irrelevant > 0 ? ` ${sig.mix.irrelevant.toLocaleString('en-US')} irrelevant or spam ${sig.mix.irrelevant === 1 ? 'item is' : 'items are'} set aside and belong to no category.` : ''}</div>
       {rows.length ? <ChartBox config={config} /> : <div className="empty-note">Nothing tagged in this view.</div>}
       <div className="split-row">
         <div className="sp">

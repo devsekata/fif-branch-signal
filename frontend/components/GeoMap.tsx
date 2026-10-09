@@ -3,8 +3,8 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { metricColor, metricValue, type Area, type GeoMetric, type RegionFeature } from '@/lib/geo';
-import { MIN_N } from '@/lib/signal';
+import { metricColor, metricValue, type Area, type BranchPoint, type GeoMetric, type RegionFeature } from '@/lib/geo';
+import { MIN_N, type Mix } from '@/lib/signal';
 
 export interface GeoMapProps {
   /** Outlines of the level being drawn, already narrowed to its parent area. */
@@ -14,14 +14,25 @@ export interface GeoMapProps {
   metric: GeoMetric;
   /** National view keeps the whole archipelago in frame; the levels below fit to the bulk of what is drawn. */
   national: boolean;
-  /** An area the scope has narrowed to; the rest is dimmed, not hidden. */
+  /** At kecamatan level the polygons stop carrying the data and become context for the branch points. */
+  outline: boolean;
+  /** Branches drawn as points: colour is sentiment, size is review volume. */
+  points: BranchPoint[];
+  /** How many branches are ranked, for the "#3 of 12" on a point's card. */
+  ranked: number;
+  /** A kecamatan the scope has narrowed to; the rest is dimmed, not hidden. */
   focus: string | null;
-  /** Wording of the last line of the hover card. */
-  hint: string;
   onPick: (name: string) => void;
+  onBranch: (branchId: string) => void;
 }
 
-/** Hover card as DOM nodes, so names never pass through innerHTML. */
+/** An area narrower and shorter than this on screen is lost under the white border the others carry. */
+const SMALL_UNDER = 16;
+
+/** Tallest hover card plus a marker radius; decides whether the card fits above a point. */
+const TIP_H = 250;
+
+/** Hover cards are built as DOM nodes, so names never pass through innerHTML. */
 function el(tag: string, cls: string, text?: string) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -29,45 +40,69 @@ function el(tag: string, cls: string, text?: string) {
   return n;
 }
 
-function tip(name: string, a: Area | undefined, hint: string) {
+const row = (k: string, v: string, alarm = false) => {
+  const r = el('div', 'pop-r');
+  r.append(el('span', '', k), el('b', alarm ? 'sig' : '', v));
+  return r;
+};
+
+/** Score headline, with the rank folded in so it costs no extra row. */
+function tipScore(mix: Mix, enough: boolean, rank: string | null) {
+  const score = el('div', enough ? 'tip-score' : 'tip-score muted');
+  if (enough) {
+    score.append(el('b', '', String(mix.score)), el('span', '', 'sentiment score'));
+    if (rank) score.append(el('em', '', rank));
+  } else {
+    score.append(el('b', '', '—'), el('span', '', `${mix.total} review${mix.total === 1 ? '' : 's'} — under the ${MIN_N} minimum, not scored`));
+  }
+  return score;
+}
+
+/** A four-segment bar and one line of counts, so the mix reads before the numbers do. */
+function tipMix(mix: Mix): HTMLElement[] {
+  const all = mix.total + mix.irrelevant;
+  if (!all) return [];
+  const bar = el('div', 'tip-bar');
+  for (const [v, c] of [[mix.good, '#1F8C84'], [mix.neutral, '#C7D5D3'], [mix.bad, '#C8322B'], [mix.irrelevant, '#7C9491']] as const) {
+    const i = el('i', '');
+    i.style.width = `${(100 * v) / all}%`;
+    i.style.background = c;
+    bar.append(i);
+  }
+  const key = el('div', 'tip-mix');
+  for (const [v, label, c] of [[mix.good, 'positive', '#1F8C84'], [mix.neutral, 'neutral', '#7C9491'], [mix.bad, 'negative', '#C8322B'], [mix.irrelevant, 'irrelevant/spam', '#54685F']] as const) {
+    const s = el('span', '');
+    const b = el('b', '', v.toLocaleString('en-US'));
+    b.style.color = c;
+    s.append(b, ` ${label}`);
+    key.append(s);
+  }
+  return [bar, key];
+}
+
+function areaTip(name: string, a: Area | undefined, drill: boolean) {
   const box = el('div', 'geo-tip-in');
   box.append(el('div', 'pop-t', name));
   if (!a) {
     box.append(el('div', 'pop-b', 'No branch in this area yet.'));
     return box;
   }
-  const { mix } = a;
-  box.append(el('div', 'tip-where', `${a.branches} ${a.branches === 1 ? 'branch' : 'branches'}`));
-  const score = el('div', a.enough ? 'tip-score' : 'tip-score muted');
-  if (a.enough) score.append(el('b', '', String(mix.score)), el('span', '', 'sentiment score'));
-  else score.append(el('b', '', '—'), el('span', '', `${mix.total} review${mix.total === 1 ? '' : 's'} — under the ${MIN_N} minimum, not scored`));
-  box.append(score);
-  if (mix.total) {
-    const bar = el('div', 'tip-bar');
-    for (const [v, c] of [[mix.good, '#1F8C84'], [mix.neutral, '#C7D5D3'], [mix.bad, '#C8322B']] as const) {
-      const i = el('i', '');
-      i.style.width = `${(100 * v) / mix.total}%`;
-      i.style.background = c;
-      bar.append(i);
-    }
-    const key = el('div', 'tip-mix');
-    for (const [v, label, c] of [[mix.good, 'positive', '#1F8C84'], [mix.neutral, 'neutral', '#7C9491'], [mix.bad, 'negative', '#C8322B']] as const) {
-      const s = el('span', '');
-      const b = el('b', '', v.toLocaleString('en-US'));
-      b.style.color = c;
-      s.append(b, ` ${label}`);
-      key.append(s);
-    }
-    box.append(bar, key);
-  }
-  const row = (k: string, v: string, alarm = false) => {
-    const r = el('div', 'pop-r');
-    r.append(el('span', '', k), el('b', alarm ? 'sig' : '', v));
-    return r;
-  };
-  box.append(row('Reviews read', mix.total.toLocaleString('en-US')));
+  box.append(el('div', 'tip-where', `${a.branches} ${a.branches === 1 ? 'branch' : 'branches'}`), tipScore(a.mix, a.enough, null), ...tipMix(a.mix));
+  box.append(row('Reviews read', (a.mix.total + a.mix.irrelevant).toLocaleString('en-US')));
   if (a.unanswered > 0) box.append(row('Unanswered complaints', String(a.unanswered), true));
-  box.append(el('div', 'pop-b', hint));
+  if (drill) box.append(el('div', 'pop-b', 'Click to drill in'));
+  return box;
+}
+
+function branchTip(p: BranchPoint, ranked: number) {
+  const box = el('div', 'geo-tip-in');
+  box.append(el('div', 'pop-t', p.place.name));
+  const where = [p.place.kecamatan, p.place.kota].filter(Boolean).join(', ');
+  if (where) box.append(el('div', 'tip-where', where));
+  box.append(tipScore(p.mix, p.enough, p.enough && p.rank ? `#${p.rank} of ${ranked}` : null), ...tipMix(p.mix));
+  box.append(row('Reviews read', (p.mix.total + p.mix.irrelevant).toLocaleString('en-US')));
+  if (p.unanswered > 0) box.append(row('Unanswered complaints', String(p.unanswered), true));
+  box.append(el('div', 'pop-b', 'Click to open the branch'));
   return box;
 }
 
@@ -107,14 +142,20 @@ function bulkBounds(features: RegionFeature[], share: number): L.LatLngBounds | 
 }
 
 const INDONESIA: L.LatLngBoundsExpression = [[-11, 95], [6, 141]];
+/* The zoom is capped per level: national has to hold the whole archipelago, a single province or
+ * kota should fill the frame rather than be zoomed into one street. */
+const MAX_ZOOM = { national: 6, area: 11, branches: 13 };
 
-/** Choropleth of one administrative level. Leaflet needs `window`, so load this with `ssr: false`. */
-export default function GeoMap({ features, areas, metric, national, focus, hint, onPick }: GeoMapProps) {
+const located = (p: BranchPoint) => p.place.lat != null && p.place.lng != null;
+
+/** One administrative level as a choropleth, with branches as points. Leaflet needs `window`, so load this with `ssr: false`. */
+export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, onPick, onBranch }: GeoMapProps) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
-  /* Kept in a ref so re-binding the click handler does not redraw the layer. */
+  /* Kept in refs so re-binding a click handler does not redraw the layers. */
   const pick = useRef(onPick);
-  useEffect(() => { pick.current = onPick; }, [onPick]);
+  const openBranch = useRef(onBranch);
+  useEffect(() => { pick.current = onPick; openBranch.current = onBranch; }, [onPick, onBranch]);
 
   useEffect(() => {
     /* zoomSnap 0 lets fitBounds use a fractional zoom. On integer snapping Leaflet rounds down,
@@ -129,17 +170,24 @@ export default function GeoMap({ features, areas, metric, national, focus, hint,
     return () => { m.remove(); map.current = null; };
   }, []);
 
+  // polygons
   useEffect(() => {
     const m = map.current;
     if (!m || !features.length) return;
     const max = Math.max(1, ...[...areas.values()].map((a) => metricValue(a, metric) ?? 0));
+    const small = new Set<string>();
     const style = (f?: RegionFeature): L.PathOptions => {
-      const a = f && areas.get(f.properties.nama);
-      const dim = focus !== null && f?.properties.nama !== focus;
+      const name = f?.properties.nama;
+      if (outline) {
+        const hit = focus !== null && name === focus;
+        return { color: '#135955', weight: hit ? 2.6 : 1.4, opacity: hit ? 1 : 0.5, fill: true, fillColor: '#135955', fillOpacity: hit ? 0.1 : 0.03 };
+      }
+      const a = name ? areas.get(name) : undefined;
+      if (a && small.has(name!)) return { color: '#0B2320', weight: 1, opacity: 1, fillColor: metricColor(a, metric, max), fillOpacity: 1 };
       return {
         color: '#FFFFFF', weight: 1.2, opacity: 0.9,
         fillColor: a ? metricColor(a, metric, max) : '#E3EAE9',
-        fillOpacity: (a ? 0.82 : 0.35) * (dim ? 0.4 : 1),
+        fillOpacity: a ? 0.82 : 0.35,
         dashArray: a ? undefined : '3 4',
       };
     };
@@ -148,29 +196,91 @@ export default function GeoMap({ features, areas, metric, national, focus, hint,
       onEachFeature: (f, l) => {
         const name = (f as RegionFeature).properties.nama;
         const a = areas.get(name);
-        /* A tooltip, not a popup: the click navigates away and would destroy a popup the moment it opened. */
-        l.bindTooltip(() => tip(name, a, hint), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
-        l.on('mouseover', () => (l as L.Path).setStyle({ weight: 2.4, color: '#0B2320' }));
+        /* A tooltip, not a popup: at drillable levels the click navigates away and would destroy a popup the moment it opened. */
+        l.bindTooltip(() => areaTip(name, a, !outline), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
+        l.on('mouseover', () => (l as L.Path).setStyle({ weight: outline ? 2.2 : 2.4, color: '#0B2320' }));
         l.on('mouseout', () => layer.resetStyle(l as L.Path));
-        if (a) l.on('click', () => pick.current(name));
+        if (!outline && a) l.on('click', () => pick.current(name));
       },
     }).addTo(m);
-    return () => { layer.remove(); };
-  }, [features, areas, metric, focus, hint]);
+    /* At national scale DKI Jakarta is a few pixels wide, less than two white borders. Areas that
+     * small keep their polygon but trade the border for a thin dark one, checked again on zoom. */
+    const mark = () => {
+      small.clear();
+      if (outline) return;
+      layer.eachLayer((l) => {
+        const p = l as L.Polygon;
+        const name = (p.feature as RegionFeature).properties.nama;
+        if (!areas.has(name)) return;
+        const b = p.getBounds();
+        const ne = m.latLngToContainerPoint(b.getNorthEast()), sw = m.latLngToContainerPoint(b.getSouthWest());
+        if (Math.max(ne.x - sw.x, sw.y - ne.y) < SMALL_UNDER) { small.add(name); p.bringToFront(); }
+      });
+      layer.setStyle((f) => style(f as RegionFeature));
+    };
+    mark();
+    m.on('zoomend', mark);
+    return () => { m.off('zoomend', mark); layer.remove(); };
+  }, [features, areas, metric, outline, focus]);
 
-  /* Framed again only when the outlines change, so recolouring by another metric leaves the view alone. */
+  // branch points
+  useEffect(() => {
+    const m = map.current;
+    const shown = points.filter(located);
+    if (!m || !shown.length) return;
+    /* Largest first, so a small branch is never buried under a big one. */
+    const group = L.layerGroup([...shown].sort((a, b) => b.mix.total - a.mix.total).map((p) => {
+      const r = Math.max(5, Math.min(17, 4 + Math.sqrt(p.mix.total) * 0.9));
+      const inFocus = focus === null || p.place.kecamatan === focus;
+      const mk = L.circleMarker([p.place.lat!, p.place.lng!], {
+        radius: r,
+        color: p.enough ? '#0B2320' : '#8FA5A3',
+        weight: inFocus ? (p.enough ? 1.6 : 1.8) : 0.8,
+        opacity: inFocus ? 0.95 : 0.35,
+        fillColor: p.enough ? metricColor(p, 'score', 1) : '#FFFFFF',
+        fillOpacity: inFocus ? (p.enough ? 0.9 : 0.25) : (p.enough ? 0.3 : 0.1),
+        dashArray: p.enough ? undefined : '2 3',
+      });
+      /* Registered before the tooltip opens: flip the card below the point when there is not
+       * enough room above it, instead of letting the map clip it. */
+      mk.on('mouseover', () => {
+        const t = mk.getTooltip();
+        if (!t) return;
+        const below = m.latLngToContainerPoint(mk.getLatLng()).y < TIP_H;
+        t.options.direction = below ? 'bottom' : 'top';
+        t.options.offset = L.point(0, below ? r + 2 : -r - 2);
+      });
+      mk.bindTooltip(() => branchTip(p, ranked), { className: 'geo-tip', direction: 'top', offset: [0, -r - 2], opacity: 1 });
+      mk.on('click', () => openBranch.current(p.place.id));
+      return mk;
+    })).addTo(m);
+    return () => { group.remove(); };
+  }, [points, ranked, focus]);
+
+  /* Framed again only when what is drawn changes, so recolouring by another metric leaves the view alone. */
   useEffect(() => {
     const m = map.current;
     if (!m) return;
-    if (!features.length) { m.fitBounds(INDONESIA); return; }
-    const full = L.geoJSON({ type: 'FeatureCollection', features } as GeoJSON.FeatureCollection).getBounds();
-    const bounds = national ? full : bulkBounds(features, 0.985) ?? full;
+    const shown = points.filter(located);
+    let bounds: L.LatLngBounds | null = null;
+    if (features.length) {
+      const full = L.geoJSON({ type: 'FeatureCollection', features } as GeoJSON.FeatureCollection).getBounds();
+      bounds = national ? full : bulkBounds(features, 0.985) ?? full;
+    }
+    /* Points with no outline behind them still have to be in frame. */
+    if (shown.length && (!features.length || !outline)) {
+      const pts = L.latLngBounds(shown.map((p) => [p.place.lat!, p.place.lng!] as [number, number]));
+      bounds = bounds ? bounds.extend(pts) : pts;
+    }
+    if (!bounds) { m.fitBounds(INDONESIA); return; }
+    const cap = !features.length ? MAX_ZOOM.branches : national ? MAX_ZOOM.national : outline ? MAX_ZOOM.branches : MAX_ZOOM.area;
+    const frame = bounds;
     /* The size is refreshed before fitting, not after: a fit computed against a stale size lands at the wrong zoom. */
-    const go = () => { m.invalidateSize(false); m.fitBounds(bounds, { padding: [24, 24] }); };
+    const go = () => { m.invalidateSize(false); m.fitBounds(frame, { padding: [24, 24], maxZoom: cap }); };
     go();
     const t = setTimeout(go, 120);
     return () => clearTimeout(t);
-  }, [features, national]);
+  }, [features, points, national, outline]);
 
-  return <div ref={box} className="geo-map" role="img" aria-label="Map of sentiment by area" />;
+  return <div ref={box} className="geo-map" role="img" aria-label="Map of sentiment by area, with branches as points" />;
 }

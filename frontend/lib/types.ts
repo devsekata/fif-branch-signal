@@ -343,7 +343,8 @@ export interface CasesResponse {
 
 /* ---------- /v1/signal/* ---------- */
 /** Positive, neutral, negative and the 0–100 score built on them. `score` is null when nothing was read. */
-export interface Mix { good: number; neutral: number; bad: number; total: number; score: number | null }
+/** `irrelevant` is the fourth category: items the relevance classifier marked irrelevant or spam, kept out of `total` and `score`. */
+export interface Mix { good: number; neutral: number; bad: number; total: number; score: number | null; irrelevant: number }
 
 export interface SignalMonth extends Mix {
   month: string;
@@ -375,6 +376,48 @@ export interface SignalOverviewResponse {
   collection: { reviews: number; five_star_pct: number; one_star_pct: number; no_text_pct: number; first_time_account_pct: number };
 }
 
+/* ---------- GET /v1/pages/listings ---------- */
+export type ListingStatus = 'matched' | 'duplicate' | 'unrecognised' | 'no_listing';
+
+export interface ListingRow {
+  /** Null on `no_listing` by definition. */
+  listing_id: string | null;
+  name: string;
+  city: string | null;
+  status: ListingStatus;
+  /** The master's code. Null on `unrecognised` by definition. */
+  branch_code: string | null;
+  master_name: string | null;
+  province: string | null;
+  kota: string | null;
+  kecamatan: string | null;
+  reviews: number;
+  rating: number | null;
+  /** Null is unknown, not false. */
+  managed: boolean | null;
+  /** What fired the flag. Empty on matched rows only. */
+  evidence: string[];
+  twin_of: string | null;
+  url: string | null;
+  seeded: boolean;
+}
+
+export interface ListingsResponse {
+  context: ApiContext;
+  meta: {
+    master_is_simulated: boolean;
+    master_note: string;
+    seeded_note: string;
+    name_threshold: number;
+    distance_threshold_m: number;
+    signals_available: string[];
+    signals_missing: string[];
+  };
+  counts: Record<ListingStatus, number>;
+  summary: { listings_found: number; master_entries: number; reviews_on_listings: number; reviews_off_master: number; reviews_off_master_pct: number };
+  rows: ListingRow[];
+}
+
 export interface SignalBranch extends Mix {
   branch_id: string;
   branch: string;
@@ -384,6 +427,12 @@ export interface SignalBranch extends Mix {
   kota: string | null;
   kecamatan: string | null;
   stated_kecamatan: string | null;
+  /** False when the area names come from Google's place data rather than the master tables, which hold no boundary for them. */
+  in_master: boolean;
+  lat: number | null;
+  lng: number | null;
+  postal_code: string | null;
+  google_score: number | null;
   reviews_universe: number | null;
   reviews_read: number;
   coverage_pct: number | null;
@@ -410,6 +459,7 @@ export interface SignalArea extends Mix {
   enough: boolean;
   branches: number;
   unanswered: number;
+  in_master: boolean;
 }
 
 export interface SignalBranchesResponse {

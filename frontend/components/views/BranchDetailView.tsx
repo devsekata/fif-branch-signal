@@ -9,8 +9,8 @@ import { useApi } from '@/lib/api';
 import { toPoints, type BranchPoint } from '@/lib/geo';
 import { useReference, type BranchPlace } from '@/lib/reference';
 import { useView, type View } from '@/lib/scope';
-import { MIN_N, scoreColor, share } from '@/lib/signal';
-import { NEUTRAL, T, monthLabel, sevColor } from '@/lib/theme';
+import { MIN_N, readOf, scoreColor, share } from '@/lib/signal';
+import { IRRELEVANT, NEUTRAL, T, monthLabel, sevColor } from '@/lib/theme';
 import type { BranchRow, BranchesResponse, CasesResponse, ComplaintsResponse, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
 
 export function BranchDetailView({ branchId }: { branchId: string }) {
@@ -56,15 +56,15 @@ function Detail({ view, b, point, points, months, published }: {
       </div>
       <div className="grid g-4 mb">
         <Metric k="Sentiment score" v={enough ? mix.score : '—'} n={enough ? 'on the full window' : `under the ${MIN_N}-review minimum`} color={scoreColor(mix.score, enough)} />
-        <Metric k="Reviews read" v={mix.total.toLocaleString('en-US')} n="from the Google scrape" />
-        <Metric k="Negative share" v={share(mix.bad, mix.total) + '%'} n={`${mix.bad} of ${mix.total} reviews`} color={mix.bad / Math.max(1, mix.total) > 0.2 ? T.sig : undefined} />
+        <Metric k="Reviews read" v={readOf(mix).toLocaleString('en-US')} n="from the Google scrape" />
+        <Metric k="Negative share" v={share(mix.bad, readOf(mix)) + '%'} n={`${mix.bad} of ${readOf(mix)} reviews`} color={mix.bad / Math.max(1, readOf(mix)) > 0.2 ? T.sig : undefined} />
         <Metric k="Average rating" v={avg ? avg + '★' : '—'} n={avg ? 'of the reviews read' : 'not available for this branch'} />
       </div>
 
       <div className="grid g-58 mb">
         <div className="panel">
           <PanelHead title="Branch profile" tag="Google Business Profile" />
-          <Info b={b} read={mix.total} published={published} />
+          <Info b={b} read={readOf(mix)} published={published} />
         </div>
         <div className="panel">
           <PanelHead title="Standing" tag={`${points.filter((p) => p.enough).length} scored branches`} />
@@ -84,9 +84,10 @@ function Detail({ view, b, point, points, months, published }: {
           <div className="p-note">A wordless high rating counts as neutral, not positive. It is a tap, not an opinion.</div>
           <MixBar mix={mix} height={14} />
           <div className="seg-key" style={{ marginTop: 12, flexDirection: 'column', gap: 7 }}>
-            <span><i className="dot" style={{ background: T.grow }} />positive — {mix.good} ({share(mix.good, mix.total)}%)</span>
-            <span><i className="dot" style={{ background: NEUTRAL }} />neutral — {mix.neutral} ({share(mix.neutral, mix.total)}%)</span>
-            <span><i className="dot" style={{ background: T.sig }} />negative — {mix.bad} ({share(mix.bad, mix.total)}%)</span>
+            <span><i className="dot" style={{ background: T.grow }} />positive — {mix.good} ({share(mix.good, readOf(mix))}%)</span>
+            <span><i className="dot" style={{ background: NEUTRAL }} />neutral — {mix.neutral} ({share(mix.neutral, readOf(mix))}%)</span>
+            <span><i className="dot" style={{ background: T.sig }} />negative — {mix.bad} ({share(mix.bad, readOf(mix))}%)</span>
+            <span><i className="dot" style={{ background: IRRELEVANT }} />irrelevant/spam — {mix.irrelevant} ({share(mix.irrelevant, readOf(mix))}%), left out of the score</span>
           </div>
           <div className="formula" style={{ marginTop: 14 }}>score = <b>(positive − negative) ÷ total</b> → {enough ? mix.score : 'withheld'}</div>
           {!enough && (
@@ -123,6 +124,8 @@ function Info({ b, read, published }: { b: BranchPlace; read: number; published:
       {row('Branch code', b.id, false, 'The Google place id, until FIF supplies its branch master')}
       {row('Address', b.address ?? 'Not captured', !b.address)}
       {row('Area', area || b.city, !area, area ? undefined : 'The address names no kecamatan the master tables hold')}
+      {row('Postal code', b.postal_code ?? 'Not captured', !b.postal_code)}
+      {row('Coordinates', b.lat != null && b.lng != null ? `${b.lat.toFixed(5)}, ${b.lng.toFixed(5)}` : 'Not captured', b.lat == null)}
       {row('Phone', 'Not captured', true, 'The review scrape does not return it — needs the Places Details API')}
       {row('Opening hours', 'Not captured', true, 'Same gap: Places Details API, not the review endpoint')}
       {row('Google rating',
@@ -172,6 +175,7 @@ function TrendChart({ months: loaded }: { months: SignalMonth[] | undefined }) {
           { ...bar, label: 'Positive', data: months.map((m) => m.good), backgroundColor: T.grow },
           { ...bar, label: 'Neutral', data: months.map((m) => m.neutral), backgroundColor: NEUTRAL },
           { ...bar, label: 'Negative', data: months.map((m) => m.bad), backgroundColor: T.sig },
+          { ...bar, label: 'Irrelevant/spam', data: months.map((m) => m.irrelevant), backgroundColor: IRRELEVANT },
         ],
       },
       options: {
