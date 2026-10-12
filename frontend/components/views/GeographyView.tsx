@@ -20,25 +20,32 @@ const GeoMap = dynamic(() => import('@/components/GeoMap'), {
   loading: () => <div className="geo-map geo-wait">Loading map…</div>,
 });
 
-/* Outlines shipped with the dashboard (public/geo), taken from the v15 prototype: every province,
- * and the kabupaten/kota of the three provinces it covered. The master tables hold Jakarta Barat
- * only, so without these the national view would be one province wide and nothing outside it
- * could be drawn as an area. A province is drawn from the shipped outline, because the master
- * tables merge it from whichever kecamatan they hold — DKI Jakarta would come out as Jakarta Barat
- * alone. For a kota the master outline is the one used where it exists. */
+/* Outlines shipped with the dashboard (public/geo), taken from the v15 prototype: most provinces,
+ * and the kabupaten/kota of the three provinces it covered. The master tables now hold an outline
+ * for every province and kab/kota, so these are the fallback: a province is drawn from the master,
+ * and from here only where the master has nothing. For a kab/kota the shipped outline is drawn
+ * where there is one, because it follows the border far more closely than the master's, which is
+ * simplified to a dozen points for a kota the size of Jakarta Barat. */
 function useOutlines(file: 'province' | 'kota' | null): RegionCollection | undefined {
   const [got, setGot] = useState<{ file: string; data: RegionCollection } | null>(null);
   useEffect(() => {
     if (!file) return;
     let live = true;
-    getJson<RegionCollection>(`/geo/${file}.json`).then((data) => { if (live) setGot({ file, data }); }, () => { /* the map falls back to the master outlines alone */ });
+    getJson<RegionCollection>(`/geo/${file}.json`).then(
+      (data) => { if (live) setGot({ file, data }); },
+      /* The map falls back to the master outlines alone; an empty set still says the file has been tried. */
+      () => { if (live) setGot({ file, data: { type: 'FeatureCollection', features: [] } }); },
+    );
     return () => { live = false; };
   }, [file]);
   return got && got.file === file ? got.data : undefined;
 }
 
 /** "Kota Jakarta Barat" and "Jakarta Barat" are the same place under two spellings. */
-const bare = (name: string) => name.replace(/^(kota|kabupaten|kab\.?)\s+/i, '').toLowerCase();
+const bare = (name: string) => name.replace(/^(kota|kabupaten|kab\.?)\s+(administrasi\s+)?/i, '').toLowerCase();
+/** A province under whichever spelling: "Daerah Istimewa Yogyakarta" is "DI Yogyakarta". */
+const provKey = (name: string | undefined) => (name ?? '').toLowerCase()
+  .replace(/daerah khusus ibu ?kota|daerah khusus/g, 'dki').replace(/daerah istimewa/g, 'di').replace(/[^a-z]/g, '');
 
 const LEVEL_PLURAL: Record<AreaLevel, string> = { province: 'Provinces', kota: 'Kota and kabupaten', kecamatan: 'Kecamatan' };
 
@@ -48,10 +55,10 @@ export function GeographyView() {
   /* Everything inside the area the map is drawn for. A kecamatan or branch scope dims the rest of its kota, it does not remove it. */
   const frame = sel.kota ? { scope_level: 'kota', scope_value: sel.kota } : sel.province ? { scope_level: 'province', scope_value: sel.province } : {};
   const res = useApi<SignalBranchesResponse>('/v1/signal/branches', { ...frame, from: view.from });
-  return <ApiPage res={res}>{(d) => <Geography view={view} data={d} />}</ApiPage>;
+  return <ApiPage res={res}>{(d) => <Geography view={view} data={d} loading={res.loading} />}</ApiPage>;
 }
 
-function Geography({ view, data }: { view: View; data: SignalBranchesResponse }) {
+function Geography({ view, data, loading }: { view: View; data: SignalBranchesResponse; loading: boolean }) {
   const { places } = useReference();
   const { setFilter } = useFilters();
   const router = useRouter();
@@ -63,23 +70,46 @@ function Geography({ view, data }: { view: View; data: SignalBranchesResponse })
   const level: AreaLevel = cur.level === 'all' ? 'province' : cur.level === 'province' ? 'kota' : 'kecamatan';
   const focus = cur.level === 'kecamatan' || cur.level === 'branch' ? sel.kecamatan : null;
 
-  const provinsi = useApi<RegionCollection>('/v1/areas/regions', { level: 'provinsi' });
-  const kabkota = useApi<RegionCollection>(level === 'province' ? null : '/v1/areas/regions', { level: 'kabkota' });
-  const kecamatan = useApi<RegionCollection>(level === 'kecamatan' ? '/v1/areas/kecamatan' : null);
+  /* A province fills a few hundred pixels and a kota is seen closer, so each is asked for at the precision it is drawn at. */
+  const provinsi = useApi<RegionCollection>('/v1/areas/regions', { level: 'provinsi', precision: 3 });
+  /* At kecamatan level the kota's own outline is still wanted, as the area the map is focused on. */
+  const kabkota = useApi<RegionCollection>(level !== 'province' && sel.province ? '/v1/areas/regions' : null, { level: 'kabkota', precision: 4, provinsi: sel.province ?? undefined });
+  /* One kota's kecamatan, not the country's: every kecamatan outline at once is more than the API can hold. */
+  const kecamatan = useApi<RegionCollection>(level === 'kecamatan' && sel.kota ? '/v1/areas/kecamatan' : null, { kabkota: sel.kota ?? undefined, provinsi: sel.province ?? undefined, precision: 5 });
   const boundaries = level === 'province' ? provinsi : level === 'kota' ? kabkota : kecamatan;
 
   const shipped = useOutlines(level === 'kecamatan' ? null : level);
+  const shippedProvinces = useOutlines(level === 'kota' ? 'province' : null);
+  const shippedKota = useOutlines(level === 'kecamatan' ? 'kota' : null);
 
   const features = useMemo(() => {
-    const master = (boundaries.data?.features ?? []).filter((f) =>
-      level === 'province' ? true : level === 'kota' ? f.properties.provinsi === sel.province : f.properties.kabkota === sel.kota);
-    if (level === 'kecamatan') return master;
-    const ours = (shipped?.features ?? []).filter((f) => level === 'province' || f.properties.provinsi === sel.province);
-    /* One outline per area: the preferred set, and the other one wherever it has nothing. */
-    const [first, rest] = level === 'province' ? [ours, master] : [master, ours];
-    const have = new Set(first.map((f) => bare(f.properties.nama)));
-    return [...first, ...rest.filter((f) => !have.has(bare(f.properties.nama)))];
-  }, [boundaries.data, shipped, level, sel.province, sel.kota]);
+    const api = boundaries.data?.features ?? [];
+    /* The API already narrowed the kecamatan to this kota, under whichever spelling the master uses. */
+    if (level === 'kecamatan') return api;
+    const ship = shipped?.features ?? [];
+    if (level === 'province') {
+      /* One outline per province: the master's own, then the shipped one, and one merged from kecamatan only as a last resort. */
+      const out = api.filter((f) => f.properties.source === 'master');
+      const have = new Set(out.map((f) => provKey(f.properties.nama)));
+      for (const f of [...ship, ...api.filter((f) => f.properties.source !== 'master')]) {
+        const k = provKey(f.properties.nama);
+        if (!have.has(k)) { have.add(k); out.push(f); }
+      }
+      return out;
+    }
+    const here = (f: RegionCollection['features'][number]) => !!sel.province && provKey(f.properties.provinsi) === provKey(sel.province);
+    const master = api.filter(here);
+    /* A shipped outline takes the master's name for the place, so the data finds it: "Jakarta Barat" is "Kota Jakarta Barat". */
+    const exact = new Map(master.map((f) => [f.properties.nama.toLowerCase(), f.properties.nama]));
+    const loose = new Map(master.map((f) => [bare(f.properties.nama), f.properties.nama]));
+    const ours = ship.filter(here).map((f) => {
+      const low = f.properties.nama.toLowerCase();
+      const name = exact.get(low) ?? (bare(low) === low ? loose.get(low) : undefined);
+      return name && name !== f.properties.nama ? { ...f, properties: { ...f.properties, nama: name } } : f;
+    });
+    const have = new Set(ours.map((f) => f.properties.nama.toLowerCase()));
+    return [...ours, ...master.filter((f) => !have.has(f.properties.nama.toLowerCase()))];
+  }, [boundaries.data, shipped, level, sel.province]);
 
   const points = useMemo(() => toPoints(data), [data]);
   const placed = useMemo(() => points.filter((p) => p.place[level]), [points, level]);
@@ -87,19 +117,40 @@ function Geography({ view, data }: { view: View; data: SignalBranchesResponse })
   const areas = useMemo(() => toAreas(data, level), [data, level]);
   const byName = useMemo(() => new Map(areas.map((a) => [a.name, a])), [areas]);
 
-  /* One representation per level. Down to kota the polygons carry the data. At kecamatan level
-   * they become context and the branches are drawn as points — colouring a whole kecamatan for two
-   * branches would make the largest area look like the worst one. An area with no boundary in the
-   * master tables is drawn as its branches' points at any level, and the note says so. */
+  /* Provinces and kab/kota are polygons only: a point per branch buries the areas being compared.
+   * The branches appear at kecamatan level, drawn as points on the kecamatan heatmap. */
   const outline = level === 'kecamatan';
   const drawn = useMemo(() => new Set(features.map((f) => f.properties.nama)), [features]);
   const markers = useMemo(() => {
     const located = points.filter((p) => p.place.lat != null && p.place.lng != null);
     if (!boundaries.data) return [];
-    return outline ? located : located.filter((p) => !p.place[level] || !drawn.has(p.place[level]!));
-  }, [points, outline, level, drawn, boundaries.data]);
-  const noBoundary = useMemo(() => [...new Set(markers.map((p) => p.place[level]).filter((n): n is string => !!n && !drawn.has(n)))], [markers, level, drawn]);
+    return level === 'kecamatan' ? located : [];
+  }, [points, level, boundaries.data]);
+  const noBoundary = useMemo(() => (boundaries.data ? [...new Set(placed.map((p) => p.place[level]).filter((n): n is string => !!n && !drawn.has(n)))] : []), [placed, level, drawn, boundaries.data]);
   const ranked = useMemo(() => points.filter((p) => p.enough).length, [points]);
+
+  /* The area being looked inside: the province at kota level, the kota at kecamatan level. */
+  const focusArea = useMemo(() => {
+    if (level === 'kota') {
+      const all = [...(provinsi.data?.features ?? []), ...(shippedProvinces?.features ?? [])];
+      return all.find((f) => provKey(f.properties.nama) === provKey(sel.province ?? '')) ?? null;
+    }
+    if (level === 'kecamatan' && sel.kota) {
+      const all = [...(kabkota.data?.features ?? []), ...(shippedKota?.features ?? [])].filter((f) => provKey(f.properties.provinsi) === provKey(sel.province ?? ''));
+      const low = sel.kota.toLowerCase();
+      return all.find((f) => f.properties.nama.toLowerCase() === low) ?? all.find((f) => bare(f.properties.nama) === bare(sel.kota!)) ?? null;
+    }
+    return null;
+  }, [level, sel.province, sel.kota, provinsi.data, kabkota.data, shippedProvinces, shippedKota]);
+
+  /* A drill changes the level at once, but its outlines and figures arrive later. Until both are in,
+   * the map keeps showing what it had, so it never empties and falls back to the whole country. */
+  const ready = !!boundaries.data && !boundaries.loading && !loading && (level === 'kecamatan' || !!shipped)
+    && (level !== 'kota' || !!shippedProvinces) && (level !== 'kecamatan' || (!kabkota.loading && !!shippedKota));
+  const next = useMemo(() => ({ features, areas: byName, national: level === 'province', outline, points: markers, focus, area: focusArea }),
+    [features, byName, level, outline, markers, focus, focusArea]);
+  const [drawnMap, setDrawnMap] = useState(next);
+  if (ready && drawnMap !== next) setDrawnMap(next);
   const openBranch = useCallback((id: string) => router.push(branchHref(id)), [router]);
 
   const drill = useCallback((name: string) => {
@@ -138,17 +189,30 @@ function Geography({ view, data }: { view: View; data: SignalBranchesResponse })
         <div className="p-head"><h3>{title}</h3><Chips flush options={GEO_METRICS} value={metric} onPick={setMetric} /></div>
         <div className="p-note">
           {focus && <><b style={{ color: 'var(--ink)' }}>Scoped to {view.scopeName}.</b> The map stays at kecamatan level so you can see it in context — everything outside the scope is dimmed, not hidden. </>}
+          Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise.{' '}
           {outline
-            ? 'At kecamatan level the polygons stop carrying the data and become context. Branches are drawn as points: colour is sentiment, size is review volume. Colouring a whole kecamatan for two branches would make the largest area look like the worst one.'
-            : 'Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise. Click an area that holds branches to drill in.'}
-          {noBoundary.length > 0 && ` No boundary geometry for ${noBoundary.join(', ')} in the master tables, so ${plural(noBoundary.length, 'its', 'their')} branches are drawn as points instead.`}
+            ? 'Each branch is drawn on its kecamatan as a point: colour is sentiment, size is review volume. Click a point to open the branch.'
+            : 'Click an area that holds branches to drill in; the branches themselves appear at kecamatan level.'}
+          {noBoundary.length > 0 && ` No boundary geometry for ${noBoundary.length > 4 ? `${noBoundary.length} ${LEVEL_PLURAL[level].toLowerCase()}` : noBoundary.join(', ')}, so ${level === 'kecamatan'
+            ? `only ${plural(noBoundary.length, 'its', 'their')} branch points show`
+            : `${plural(noBoundary.length, 'it is', 'they are')} missing from the map and listed in the table below`}.`}
           {unplaced.length > 0 && ` ${unplaced.length} ${plural(unplaced.length, 'branch has', 'branches have')} no area on record yet and ${plural(unplaced.length, 'is', 'are')} left off this level.`}
         </div>
         {boundaries.error
           ? <div className="empty-note">Boundaries could not be loaded. {boundaries.error}</div>
-          : <GeoMap features={features} areas={byName} metric={metric} national={level === 'province'} outline={outline}
-              points={markers} ranked={ranked} focus={focus} onPick={drill} onBranch={openBranch} />}
-        <Legend metric={metric} points={markers.length > 0} polygons={!outline && features.length > 0} />
+          : (
+            <div className="geo-stage">
+              <GeoMap features={drawnMap.features} areas={drawnMap.areas} metric={metric} national={drawnMap.national} outline={drawnMap.outline}
+                points={drawnMap.points} ranked={ranked} focus={drawnMap.focus} area={drawnMap.area} onPick={drill} onBranch={openBranch} />
+              {!ready && (
+                <div className="geo-loading" role="status">
+                  <span className="geo-spin" aria-hidden="true" />
+                  Loading {level === 'province' ? 'Indonesia' : level === 'kota' ? sel.province : sel.kota}…
+                </div>
+              )}
+            </div>
+          )}
+        <Legend metric={metric} points={markers.length > 0} polygons={features.length > 0} />
         <MapNote areas={areas} level={level} />
         <div style={{ height: 16 }} />
       </div>

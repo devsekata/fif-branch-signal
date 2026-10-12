@@ -11,7 +11,7 @@ import { useReference, type BranchPlace } from '@/lib/reference';
 import { useView, type View } from '@/lib/scope';
 import { MIN_N, readOf, scoreColor, share } from '@/lib/signal';
 import { IRRELEVANT, NEUTRAL, T, monthLabel, sevColor } from '@/lib/theme';
-import type { BranchRow, BranchesResponse, CasesResponse, ComplaintsResponse, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
+import type { BranchRow, BranchesResponse, CasesResponse, ComplaintsResponse, SignalBranch, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
 
 export function BranchDetailView({ branchId }: { branchId: string }) {
   const view = useView('branch', branchId);
@@ -64,7 +64,7 @@ function Detail({ view, b, point, points, months, published }: {
       <div className="grid g-58 mb">
         <div className="panel">
           <PanelHead title="Branch profile" tag="Google Business Profile" />
-          <Info b={b} read={readOf(mix)} published={published} />
+          <Info b={b} read={readOf(mix)} published={published} live={point?.row} />
         </div>
         <div className="panel">
           <PanelHead title="Standing" tag={`${points.filter((p) => p.enough).length} scored branches`} />
@@ -110,7 +110,7 @@ function Detail({ view, b, point, points, months, published }: {
   );
 }
 
-function Info({ b, read, published }: { b: BranchPlace; read: number; published: BranchRow | undefined }) {
+function Info({ b, read, published, live }: { b: BranchPlace; read: number; published: BranchRow | undefined; live: SignalBranch | undefined }) {
   const row = (k: string, v: React.ReactNode, missing = false, note?: string) => (
     <div className="info-row">
       <dt>{k}</dt>
@@ -118,7 +118,13 @@ function Info({ b, read, published }: { b: BranchPlace; read: number; published:
     </div>
   );
   const area = [b.kecamatan, b.kota, b.province].filter(Boolean).join(' · ');
-  const score = published?.google_public_score;
+  const score = live?.google_score ?? published?.google_public_score;
+  const universe = live?.reviews_universe ?? published?.reviews_universe ?? 0;
+  const reply = live?.avg_response_hours;
+  /* Three states each: synced with a value, synced and Google publishes none, not synced yet. */
+  const hours = live?.opening_hours;
+  const days = hours && !Array.isArray(hours) ? hours.weekdayDescriptions ?? [] : [];
+  const synced = hours != null;
   return (
     <dl className="info-list">
       {row('Branch code', b.id, false, 'The Google place id, until FIF supplies its branch master')}
@@ -126,11 +132,17 @@ function Info({ b, read, published }: { b: BranchPlace; read: number; published:
       {row('Area', area || b.city, !area, area ? undefined : 'The address names no kecamatan the master tables hold')}
       {row('Postal code', b.postal_code ?? 'Not captured', !b.postal_code)}
       {row('Coordinates', b.lat != null && b.lng != null ? `${b.lat.toFixed(5)}, ${b.lng.toFixed(5)}` : 'Not captured', b.lat == null)}
-      {row('Phone', 'Not captured', true, 'The review scrape does not return it — needs the Places Details API')}
-      {row('Opening hours', 'Not captured', true, 'Same gap: Places Details API, not the review endpoint')}
+      {live?.phone
+        ? row('Phone', <a className="link" href={`tel:${live.phone.replace(/[^0-9+]/g, '')}`}>{live.phone}</a>)
+        : row('Phone', synced ? 'None published' : 'Not captured', true, synced ? 'Google lists no phone number for this place' : 'This branch has not been synced with Google place details yet')}
+      {days.length
+        ? row('Opening hours', <>{days.map((d) => <div key={d}>{d}</div>)}</>)
+        : row('Opening hours', synced ? 'None published' : 'Not captured', true, synced ? 'Google lists no opening hours for this place' : 'This branch has not been synced with Google place details yet')}
       {row('Google rating',
-        score != null ? `${score}★ published, from ${published!.reviews_universe.toLocaleString('en-US')} reviews` : 'Not available', score == null,
-        published?.reviews_universe ? `We read ${read} of them — ${((100 * read) / published.reviews_universe).toFixed(1)}% coverage` : undefined)}
+        score != null ? `${score}★ published${universe ? `, from ${universe.toLocaleString('en-US')} reviews` : ''}` : 'Not available', score == null,
+        universe ? `We read ${read} of them — ${((100 * read) / universe).toFixed(1)}% coverage` : undefined)}
+      {row('Owner reply time', reply != null ? `${reply >= 48 ? `${(reply / 24).toFixed(1)} days` : `${Math.round(reply)} hours`} on average` : 'No dated reply', reply == null,
+        reply != null ? 'From the reviews the owner answered and Google dated' : 'Google gives no reply date for this branch')}
       {row('Owner replies', published?.owner_reply_rate_pct != null ? `${published.owner_reply_rate_pct}% of reviews answered` : 'Not captured', published?.owner_reply_rate_pct == null)}
       {row('Place link', <a className="link" href={`https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(b.id)}`} target="_blank" rel="noopener">Open on Google Maps</a>)}
     </dl>

@@ -23,7 +23,10 @@ async function load(params: Params, fresh: boolean): Promise<CaseList> {
   const total = first.page.total;
   const items = [...first.items];
   for (let o = PAGE; o < Math.min(total, CAP); o += PAGE) items.push(...(await getJson<CasesResponse>(url(o), fresh)).items);
-  return { items, total, partial: total > items.length };
+  /* A case can turn up on two pages when the queue changes between the calls; it is listed once. */
+  const seen = new Set<string>();
+  const unique = items.filter((c) => !seen.has(c.case_id) && seen.add(c.case_id));
+  return { items: unique, total, partial: total > unique.length };
 }
 
 /** Every case matching `params`, across as many pages as it takes. Pass `null` to skip. */

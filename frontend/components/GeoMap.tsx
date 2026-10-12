@@ -14,7 +14,7 @@ export interface GeoMapProps {
   metric: GeoMetric;
   /** National view keeps the whole archipelago in frame; the levels below fit to the bulk of what is drawn. */
   national: boolean;
-  /** At kecamatan level the polygons stop carrying the data and become context for the branch points. */
+  /** Kecamatan level: the polygons are coloured as everywhere else, and the branches are drawn on them as points. */
   outline: boolean;
   /** Branches drawn as points: colour is sentiment, size is review volume. */
   points: BranchPoint[];
@@ -22,6 +22,8 @@ export interface GeoMapProps {
   ranked: number;
   /** A kecamatan the scope has narrowed to; the rest is dimmed, not hidden. */
   focus: string | null;
+  /** The province or kota being looked inside. Everything outside it is masked and the frame is fitted to it. */
+  area?: RegionFeature | null;
   onPick: (name: string) => void;
   onBranch: (branchId: string) => void;
 }
@@ -31,6 +33,7 @@ const SMALL_UNDER = 16;
 
 /** Tallest hover card plus a marker radius; decides whether the card fits above a point. */
 const TIP_H = 250;
+const TIP_W = 250;
 
 /** Hover cards are built as DOM nodes, so names never pass through innerHTML. */
 function el(tag: string, cls: string, text?: string) {
@@ -80,7 +83,7 @@ function tipMix(mix: Mix): HTMLElement[] {
   return [bar, key];
 }
 
-function areaTip(name: string, a: Area | undefined, drill: boolean) {
+function areaTip(name: string, a: Area | undefined, action: string) {
   const box = el('div', 'geo-tip-in');
   box.append(el('div', 'pop-t', name));
   if (!a) {
@@ -90,7 +93,7 @@ function areaTip(name: string, a: Area | undefined, drill: boolean) {
   box.append(el('div', 'tip-where', `${a.branches} ${a.branches === 1 ? 'branch' : 'branches'}`), tipScore(a.mix, a.enough, null), ...tipMix(a.mix));
   box.append(row('Reviews read', (a.mix.total + a.mix.irrelevant).toLocaleString('en-US')));
   if (a.unanswered > 0) box.append(row('Unanswered complaints', String(a.unanswered), true));
-  if (drill) box.append(el('div', 'pop-b', 'Click to drill in'));
+  box.append(el('div', 'pop-b', action));
   return box;
 }
 
@@ -104,6 +107,15 @@ function branchTip(p: BranchPoint, ranked: number) {
   if (p.unanswered > 0) box.append(row('Unanswered complaints', String(p.unanswered), true));
   box.append(el('div', 'pop-b', 'Click to open the branch'));
   return box;
+}
+
+/** Points the hover card at whichever side of `at` has room for it, so the map never clips it:
+ *  above by default, below near the top edge, and sideways when it would run off the left or right. */
+function aim(m: L.Map, t: L.Tooltip, at: L.Point, gap: number) {
+  const { x: w, y: h } = m.getSize();
+  const dir = at.x < TIP_W / 2 ? 'right' : at.x > w - TIP_W / 2 ? 'left' : at.y < TIP_H && at.y < h / 2 ? 'bottom' : 'top';
+  t.options.direction = dir;
+  t.options.offset = dir === 'top' ? L.point(0, -gap) : dir === 'bottom' ? L.point(0, gap) : L.point(dir === 'right' ? gap : -gap, 0);
 }
 
 /* Bounds covering the bulk of the drawn area, ignoring far-flung islands. An outlying island is
@@ -149,7 +161,7 @@ const MAX_ZOOM = { national: 6, area: 11, branches: 13 };
 const located = (p: BranchPoint) => p.place.lat != null && p.place.lng != null;
 
 /** One administrative level as a choropleth, with branches as points. Leaflet needs `window`, so load this with `ssr: false`. */
-export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, onPick, onBranch }: GeoMapProps) {
+export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, area, onPick, onBranch }: GeoMapProps) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   /* Kept in refs so re-binding a click handler does not redraw the layers. */
@@ -178,16 +190,21 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     const small = new Set<string>();
     const style = (f?: RegionFeature): L.PathOptions => {
       const name = f?.properties.nama;
-      if (outline) {
-        const hit = focus !== null && name === focus;
-        return { color: '#135955', weight: hit ? 2.6 : 1.4, opacity: hit ? 1 : 0.5, fill: true, fillColor: '#135955', fillOpacity: hit ? 0.1 : 0.03 };
-      }
       const a = name ? areas.get(name) : undefined;
+      /* A kecamatan scope keeps its kota in view: the chosen kecamatan is drawn in full, the rest faded, not hidden. */
+      if (outline && focus !== null) {
+        const hit = name === focus;
+        return {
+          color: hit ? '#0B2320' : '#6F8F8B', weight: hit ? 2.6 : 0.9, opacity: hit ? 1 : 0.7,
+          fillColor: a ? metricColor(a, metric, max) : '#E3EAE9', fillOpacity: hit ? (a ? 0.82 : 0.5) : 0.2,
+        };
+      }
       if (a && small.has(name!)) return { color: '#0B2320', weight: 1, opacity: 1, fillColor: metricColor(a, metric, max), fillOpacity: 1 };
+      /* Inside a province the areas without branches are most of the map, so they need a border that can be seen. */
       return {
-        color: '#FFFFFF', weight: 1.2, opacity: 0.9,
+        color: national ? '#FFFFFF' : '#6F8F8B', weight: national ? 1.2 : 0.9, opacity: 0.9,
         fillColor: a ? metricColor(a, metric, max) : '#E3EAE9',
-        fillOpacity: a ? 0.82 : 0.35,
+        fillOpacity: a ? 0.82 : national ? 0.35 : 0.5,
         dashArray: a ? undefined : '3 4',
       };
     };
@@ -197,10 +214,11 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
         const name = (f as RegionFeature).properties.nama;
         const a = areas.get(name);
         /* A tooltip, not a popup: at drillable levels the click navigates away and would destroy a popup the moment it opened. */
-        l.bindTooltip(() => areaTip(name, a, !outline), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
+        l.on('mouseover mousemove', (e) => { const t = l.getTooltip(); if (t) aim(m, t, (e as L.LeafletMouseEvent).containerPoint, 6); });
+        l.bindTooltip(() => areaTip(name, a, outline ? 'Click to open its branches' : 'Click to drill in'), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
         l.on('mouseover', () => (l as L.Path).setStyle({ weight: outline ? 2.2 : 2.4, color: '#0B2320' }));
         l.on('mouseout', () => layer.resetStyle(l as L.Path));
-        if (!outline && a) l.on('click', () => pick.current(name));
+        if (a) l.on('click', () => pick.current(name));
       },
     }).addTo(m);
     /* At national scale DKI Jakarta is a few pixels wide, less than two white borders. Areas that
@@ -221,7 +239,18 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     mark();
     m.on('zoomend', mark);
     return () => { m.off('zoomend', mark); layer.remove(); };
-  }, [features, areas, metric, outline, focus]);
+  }, [features, areas, metric, outline, focus, national]);
+
+  /* The chosen province or kota is outlined, so it reads as one place; nothing outside it is hidden or dimmed. */
+  useEffect(() => {
+    const m = map.current;
+    /* At kecamatan level the kecamatan already draw the kota, closer than its own simplified outline would. */
+    if (!m || !area || outline) return;
+    const g = area.geometry;
+    const rings = (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((r) => r[0].map(([x, y]) => [y, x] as [number, number]));
+    const edge = L.polygon(rings, { color: '#0B2320', weight: 2.2, opacity: 0.9, fill: false, interactive: false }).addTo(m);
+    return () => { edge.remove(); };
+  }, [area, outline]);
 
   // branch points
   useEffect(() => {
@@ -245,10 +274,7 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
        * enough room above it, instead of letting the map clip it. */
       mk.on('mouseover', () => {
         const t = mk.getTooltip();
-        if (!t) return;
-        const below = m.latLngToContainerPoint(mk.getLatLng()).y < TIP_H;
-        t.options.direction = below ? 'bottom' : 'top';
-        t.options.offset = L.point(0, below ? r + 2 : -r - 2);
+        if (t) aim(m, t, m.latLngToContainerPoint(mk.getLatLng()), r + 2);
       });
       mk.bindTooltip(() => branchTip(p, ranked), { className: 'geo-tip', direction: 'top', offset: [0, -r - 2], opacity: 1 });
       mk.on('click', () => openBranch.current(p.place.id));
@@ -272,6 +298,9 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
       const pts = L.latLngBounds(shown.map((p) => [p.place.lat!, p.place.lng!] as [number, number]));
       bounds = bounds ? bounds.extend(pts) : pts;
     }
+    /* Looking inside one area, the frame is that area: a branch filed with a stray coordinate does not widen it. */
+    /* Far-flung islands of the area are left out of the frame, as they are for the outlines. */
+    if (area) bounds = bulkBounds([area], 0.985) ?? L.geoJSON(area as GeoJSON.Feature).getBounds();
     if (!bounds) { m.fitBounds(INDONESIA); return; }
     const cap = !features.length ? MAX_ZOOM.branches : national ? MAX_ZOOM.national : outline ? MAX_ZOOM.branches : MAX_ZOOM.area;
     const frame = bounds;
@@ -280,7 +309,7 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     go();
     const t = setTimeout(go, 120);
     return () => clearTimeout(t);
-  }, [features, points, national, outline]);
+  }, [features, points, national, outline, area]);
 
   return <div ref={box} className="geo-map" role="img" aria-label="Map of sentiment by area, with branches as points" />;
 }

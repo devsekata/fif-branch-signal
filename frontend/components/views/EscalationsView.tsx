@@ -3,9 +3,9 @@
 import { useMemo, useState } from 'react';
 import { useCaseDrawer } from '@/components/CaseHost';
 import { AiNote, ApiPage, Chip, Chips, EmptyRow, NoText, Rating, SortHead, SourceBadge, Tags, type Col } from '@/components/ui';
-import { STATE, type StatusId } from '@/lib/caseflow';
+import { STATE, asState } from '@/lib/caseflow';
 import { useCaseList, type CaseList } from '@/lib/cases';
-import { toRow, type CaseRow } from '@/lib/caseRow';
+import { slaLabel, toRow, type CaseRow } from '@/lib/caseRow';
 import { useCase } from '@/lib/caseStore';
 import { useReference } from '@/lib/reference';
 import { nextSort, sortRows, useView, type SortState } from '@/lib/scope';
@@ -25,8 +25,10 @@ const CHIPS: [QueueFilter, string][] = [['all', 'Everything'], ['critical', 'Cri
 const BUCKETS: [Bucket, string][] = [['any', 'Any status'], ['untouched', 'Not started'], ['working', 'In progress'], ['awaiting', 'Awaiting approval'], ['closed', 'Closed']];
 
 /** Where a case stands, in the four words a queue is read by. */
-const bucketOf = (status: string): Exclude<Bucket, 'any'> =>
-  status === 'open' ? 'untouched' : status === 'pending' ? 'awaiting' : status === 'closed' || status === 'resolved' ? 'closed' : 'working';
+const bucketOf = (status: string): Exclude<Bucket, 'any'> => {
+  const s = asState(status);
+  return s === 'open' ? 'untouched' : s === 'pending' ? 'awaiting' : s === 'closed' || s === 'verified' ? 'closed' : 'working';
+};
 
 export function EscalationsView() {
   const view = useView('escalations');
@@ -100,7 +102,10 @@ function Queue({ list }: { list: CaseList }) {
                   <div className="sub">{c.where}{c.stars ? <><br /><Rating stars={c.stars} /></> : null}</div>
                 </td>
                 <td className="mono">{c.date.slice(0, 10)}</td>
-                <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>{c.age}d</td>
+                <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>
+                  {c.age}d
+                  {c.sla && <div className="sub" style={{ whiteSpace: 'nowrap', color: c.sla.breached ? T.sig : undefined, fontWeight: c.sla.breached ? 600 : undefined }}>SLA {slaLabel(c.sla)}</div>}
+                </td>
                 <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
                 <td>
                   <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>
@@ -135,7 +140,7 @@ function Queue({ list }: { list: CaseList }) {
 function StatusPill({ id, status }: { id: string; status: string }) {
   const s = useCase(id);
   const now = s.trail.length ? s.status : status;
-  const known = STATE[now as StatusId];
+  const known = STATE[asState(now)];
   const tone = known?.tone;
   const color = tone === 'ok' ? 'var(--grow)' : tone === 'bad' ? T.sig : tone === 'warn' ? 'var(--warn)' : 'var(--ink-3)';
   return <span className="sub" style={{ color, fontWeight: 600, whiteSpace: 'nowrap', marginTop: 0 }}>{known?.label ?? now}</span>;

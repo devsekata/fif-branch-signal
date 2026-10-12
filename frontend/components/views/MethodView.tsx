@@ -4,7 +4,7 @@ import { PanelHead } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { useReference } from '@/lib/reference';
 import { plural } from '@/lib/theme';
-import type { ComplaintsResponse, ConfigResponse, SocialResponse } from '@/lib/types';
+import type { AccuracyBand, ClassifierAccuracy, ComplaintsResponse, ConfigResponse, SocialResponse } from '@/lib/types';
 
 /** Fallback wording per level when the config ladder carries no description. */
 const COVERS: Record<number, string> = {
@@ -178,6 +178,9 @@ export function MethodView() {
             </tbody>
           </table>
 
+          <div className="p-head" style={{ marginTop: 22 }}><h3>Classifier accuracy</h3></div>
+          <Accuracy a={config?.classifier_accuracy} />
+
           <div className="p-head" style={{ marginTop: 22 }}><h3>Instagram-specific limits</h3></div>
           <table>
             <thead><tr><th>Instagram limit</th><th>Effect</th></tr></thead>
@@ -209,5 +212,30 @@ export function MethodView() {
         )}
       </div>
     </section>
+  );
+}
+
+/** Measured against a labelled set, or said plainly not to have been: an unmeasured classifier is unknown, not perfect. */
+function Accuracy({ a }: { a: ClassifierAccuracy | null | undefined }) {
+  if (!a) {
+    return <div className="p-note" style={{ marginBottom: 0 }}>Not measured yet. The evaluation runs against a labelled set of reviews, and no labelled set has been scored. Until one has, every count on this dashboard is the classifier&rsquo;s word alone.</div>;
+  }
+  const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+  const rows: [string, AccuracyBand][] = [...a.by_severity.map((b): [string, AccuracyBand] => [`Severity ${b.severity}`, b]), ...(a.overall ? [['Overall', a.overall] as [string, AccuracyBand]] : [])];
+  return (
+    <>
+      <table>
+        <thead><tr><th>Band</th><th className="n">Labelled</th><th className="n">Precision</th><th className="n">Recall</th><th className="n">F1</th></tr></thead>
+        <tbody>
+          {rows.map(([label, b]) => (
+            <tr key={label}>
+              <td><b>{label}</b></td>
+              <td className="n mono">{b.n}</td><td className="n mono">{pct(b.precision)}</td><td className="n mono">{pct(b.recall)}</td><td className="n mono">{pct(b.f1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="sub" style={{ marginTop: 8 }}>Classifier {a.classifier_version} on labelled set {a.set_version}, evaluated {a.evaluated_at.slice(0, 10)}.</div>
+    </>
   );
 }
