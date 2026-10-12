@@ -76,7 +76,7 @@ function GoogleSummary({ c, g, big, wide }: { c: SignalOverviewResponse['collect
         <Metric k="Five-star share" v={five + '%'} n={`against ${one}% at one star`} />
         <Metric k="No text" v={notext + '%'} n="a tap, not a review" />
         <Metric k="One-review accounts" v={firstTime + '%'} n="created or used once" />
-        <Metric k="Repeat reviewers found" v={g.repeat_reviewers} n="Google permits one review per account per place" />
+        <Metric k="Repeat reviewers found" v={g.repeat_reviewers} n={g.repeat_reviewers ? 'accounts that reviewed more than one branch' : 'Google permits one review per account per place'} />
       </div>
       <Flags
         label="What the integrity scan flagged on Google"

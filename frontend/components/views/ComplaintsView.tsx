@@ -33,7 +33,7 @@ function Complaints({ view, payload }: { view: View; payload: ComplaintsResponse
       </div>
       {both && <Exclusive rows={topics} />}
       <div className="grid g-2 mb">
-        <Language view={view} praise={praise} terms={payload?.terms_negative} />
+        <Language view={view} praise={praise} terms={payload?.terms_negative} positiveTerms={payload?.terms_positive} />
         <div className="panel">
           <PanelHead title="Top praised branches" tag="by positive share" />
           <div className="p-note">Scored branches only. The benchmark list for whoever runs branch coaching.</div>
@@ -75,16 +75,20 @@ function ClassificationCard({ view, topics, praise }: { view: View; topics: Topi
   /* The two kinds of neutral the API can tell apart today: a star with no words, and text with no verdict. */
   const sig = useApi<SignalOverviewResponse>('/v1/signal/overview', view.sig).data;
   const wordless = sig?.neutral_rating_only ?? 0;
-  const worded = Math.max(0, (sig?.mix.neutral ?? 0) - wordless);
+  const questions = sig?.neutral_questions;
+  const worded = Math.max(0, (sig?.mix.neutral ?? 0) - wordless - (questions ?? 0));
   return (
     <div className="panel mb">
       <PanelHead title="Review classification — every category" tag={`${rows.length} categories`} />
-      <div className="p-note">Every tagged category on one axis, with positive, neutral and negative side by side. Neutral categories — questions about promos, requirements, payment channels — are in the taxonomy but are not tagged by the API yet, so that band is empty.{sig && sig.mix.irrelevant > 0 ? ` ${sig.mix.irrelevant.toLocaleString('en-US')} irrelevant or spam ${sig.mix.irrelevant === 1 ? 'item is' : 'items are'} set aside and belong to no category.` : ''}</div>
+      <div className="p-note">Every tagged category on one axis, with positive, neutral and negative side by side. Neutral categories — questions about promos, requirements, payment channels — are counted in the boxes below rather than on this chart.{sig && sig.mix.irrelevant > 0 ? ` ${sig.mix.irrelevant.toLocaleString('en-US')} irrelevant or spam ${sig.mix.irrelevant === 1 ? 'item is' : 'items are'} set aside and belong to no category.` : ''}</div>
       {rows.length ? <ChartBox config={config} /> : <div className="empty-note">Nothing tagged in this view.</div>}
       <div className="split-row">
         <div className="sp">
-          <div className="k">Neutral — a question</div><div className="v">—</div>
-          <div className="n">Text with no verdict in it. Someone wants an answer, not an apology. The API does not classify questions yet; {worded} neutral {worded === 1 ? 'item carries' : 'items carry'} text and may be one.</div>
+          <div className="k">Neutral — a question</div><div className="v">{questions != null ? questions.toLocaleString('en-US') : '—'}</div>
+          <div className="n">Text with no verdict in it. Someone wants an answer, not an apology.{' '}
+            {questions != null
+              ? `Read as a question by the relevance classifier${worded ? `; ${worded} more neutral ${worded === 1 ? 'item carries' : 'items carry'} text it did not call one` : ''}.`
+              : `The API does not classify questions yet; ${worded} neutral ${worded === 1 ? 'item carries' : 'items carry'} text and may be one.`}</div>
         </div>
         <div className="sp">
           <div className="k">Neutral — rating only</div><div className="v">{sig ? wordless.toLocaleString('en-US') : '…'}</div>
@@ -274,13 +278,17 @@ function Exclusive({ rows }: { rows: TopicRow[] }) {
 type LangMode = 'positive' | 'negative';
 const LANG_MODES: [LangMode, string][] = [['positive', 'Positive words'], ['negative', 'Words inside complaints']];
 
-function Language({ view, praise, terms: negative }: { view: View; praise: Praise; terms: ComplaintsResponse['terms_negative'] | undefined }) {
+function Language({ view, praise, terms: negative, positiveTerms }: {
+  view: View; praise: Praise; terms: ComplaintsResponse['terms_negative'] | undefined; positiveTerms: ComplaintsResponse['terms_positive'];
+}) {
   const [mode, setMode] = useState<LangMode>('negative');
   const positive = mode === 'positive';
+  /* Positive words are counted by the API when it has them; otherwise the praise categories stand in. */
+  const counted = !!positiveTerms?.length;
   const terms = useMemo(() => (positive
-    ? praise.map((p) => ({ w: p.label, n: p.n }))
+    ? counted ? positiveTerms!.slice(0, 18).map((t) => ({ w: t.term, n: t.n })) : praise.map((p) => ({ w: p.label, n: p.n }))
     : (negative ?? []).slice(0, 18).map((t) => ({ w: t.term, n: t.n }))
-  ).sort((a, b) => b.n - a.n), [positive, praise, negative]);
+  ).sort((a, b) => b.n - a.n), [positive, praise, negative, counted, positiveTerms]);
   const config = useMemo((): ChartConfig<'bar'> => {
     const top = terms.slice(0, 9);
     return {
@@ -294,7 +302,7 @@ function Language({ view, praise, terms: negative }: { view: View; praise: Prais
   }, [terms, positive]);
   const max = Math.max(1, ...terms.map((x) => x.n)), min = Math.min(...terms.map((x) => x.n));
   /* Term counts come from the API, which narrows by one branch but not by an area. */
-  const wide = !positive && view.isSet && !view.sel.branch;
+  const wide = (positive ? counted : true) && view.isSet && !view.sel.branch;
   return (
     <div className="panel">
       <PanelHead title="The language people use" tag={`${terms.length} terms`} />
@@ -306,7 +314,9 @@ function Language({ view, praise, terms: negative }: { view: View; praise: Prais
         <div className="empty-note">No text on that side in this selection.</div>
       ) : (
         <>
-          {wide && <div className="sim" style={{ marginBottom: 10 }}><span>⚠</span><span>These words are counted across every branch: the API narrows term counts by a single branch, not by {view.cur.level}.</span></div>}
+          {wide && <div className="sim" style={{ marginBottom: 10 }}><span>⚠</span><span>{positive
+            ? 'Positive words are counted across every branch and the whole period; the API does not narrow them yet.'
+            : `These words are counted across every branch: the API narrows term counts by a single branch, not by ${view.cur.level}.`}</span></div>}
           <div className="cloud">
             {terms.map((x) => {
               const t = (x.n - min) / Math.max(1, max - min);
@@ -315,7 +325,7 @@ function Language({ view, praise, terms: negative }: { view: View; praise: Prais
             })}
           </div>
           <div style={{ marginTop: 14 }}><ChartBox config={config} size="sm" /></div>
-          {positive && <Pending>Positive wording is shown as the tagged praise categories. A term count for positive text, like the one behind the complaint side, is not returned by the API yet.</Pending>}
+          {positive && !counted && <Pending>Positive wording is shown as the tagged praise categories. A term count for positive text, like the one behind the complaint side, is not returned by the API yet.</Pending>}
         </>
       )}
     </div>

@@ -3,16 +3,17 @@
 import { useEffect, useState } from 'react';
 import { Rating, SourceBadge, Tags } from '@/components/ui';
 import {
-  EDITABLE, SCORE_LABEL, STATE, TEMPLATES, TRACKS,
+  EDITABLE, FAILED, SCORE_LABEL, SENT, STATE, TEMPLATES, TRACKS,
   applyMove, logTo, moveToStatus, movesFor, replyBody, roleName, trackOf, withDraft,
-  type OfferedMove, type RoleId, type TrackId,
+  type Move, type OfferedMove, type RoleId, type TrackId,
 } from '@/lib/caseflow';
 import { explain, fromServer, postReply, readCaseFromApi } from '@/lib/caseApi';
+import { slaLabel } from '@/lib/caseRow';
 import { readCase, useCase, writeCase } from '@/lib/caseStore';
 import type { Channel, Priority } from '@/lib/types';
 
 /** Moves the Send button in the composer stands for, whichever track the case is on. */
-const SEND_MOVES = ['send', 'send_appr', 'send_comp'];
+const SEND_MOVES = ['send', 'send_appr', 'retry', 'retry_c'];
 
 /** What the drawer needs from a queue row. */
 export interface DrawerCase {
@@ -32,6 +33,9 @@ export interface DrawerCase {
   meta: string;
   url: string | null;
   components: Record<string, number>;
+  /** The track the API assigned. Without one the drawer reads it off the topics, as it did before the API sent it. */
+  track?: TrackId | null;
+  sla?: { deadline: string; breached: boolean; remainingH: number | null } | null;
 }
 
 export function CaseDrawer({ c, role, email, onClose }: {
@@ -45,7 +49,7 @@ export function CaseDrawer({ c, role, email, onClose }: {
 
   const stored = useCase(c?.id);
   const s = c ? stored : null;
-  const track: TrackId | null = c ? trackOf({ topicIds: c.topics, topicLabels: c.topicLabels, severity: c.severity, hasText: !!c.text }) : null;
+  const track: TrackId | null = c ? c.track ?? trackOf({ topicIds: c.topics, topicLabels: c.topicLabels, severity: c.severity, hasText: !!c.text }) : null;
 
   /* `sending` is transient: the prototype resolves it on a timer rather than a click,
    * because the real thing is an API round trip. */
@@ -87,8 +91,7 @@ export function CaseDrawer({ c, role, email, onClose }: {
   const moves = movesFor(s, track, role);
   const can = moves.filter((m) => !m.block);
   const cant = moves.filter((m) => m.block);
-  const retryMove = s.sendState === 'failed' ? moves.find((m) => m.id === s.pendingMove) ?? null : null;
-  const sendMove = retryMove ?? moves.find((m) => SEND_MOVES.includes(m.id));
+  const sendMove = moves.find((m) => SEND_MOVES.includes(m.id));
   const editable = EDITABLE.includes(s.status) && s.sendState === 'idle';
   const pool = track === 'conduct' ? TEMPLATES.conduct : TEMPLATES.service;
   const steps = TRACKS[track];
@@ -102,25 +105,41 @@ export function CaseDrawer({ c, role, email, onClose }: {
       if (answer === null) return;
       note = answer;
     }
+    const ok = await post(m, note);
+    /* A send passes through `sending`; the platform's answer is the second step. Simulated here,
+     * because no platform is connected: it lands on `sent`, or on `failed` when asked to. */
+    if (ok && m.async) {
+      await new Promise((r) => setTimeout(r, 900));
+      await post(simFail ? FAILED : SENT);
+    }
+  }
+
+  /** Posts one move as `state`. Nothing is applied when the server says no, so the screen never shows a step it refused. */
+  async function post(m: Move, note?: string): Promise<boolean> {
+    if (!c) return false;
     const before = readCase(c.id);
     writeCase(c.id, { ...before, sendState: 'sending', pendingMove: m.id, apiError: null });
     try {
       const res = await postReply(c.id, replyBody(before, m, role, c.severity, email));
-      const moved = applyMove(before, m, role, note, email);
-      writeCase(c.id, fromServer({ ...moved, status: m.to, sendState: 'idle', pendingMove: null }, res));
+      writeCase(c.id, fromServer(applyMove(before, m, role, note, email), res));
+      return true;
     } catch (e) {
-      /* Nothing is applied when the server says no, so the screen never shows a step it refused. */
       writeCase(c.id, { ...before, sendState: 'failed', pendingMove: m.id, apiError: explain(e) });
+      return false;
     }
   }
 
   const lock = s.sendState === 'sending' ? 'Saving to the server…'
     : s.sendState === 'failed' ? 'The server refused the last step. Nothing was changed.'
     : ({
-        pending: s.isFinal ? 'Approved — editing would void the sign-off.' : 'Locked while compliance reviews it.',
-        rejected: 'Sent back. Use Rewrite the draft to reopen the composer.',
-        manual_reply_submitted: 'Posted. Reopen the case to change anything.',
-        resolved: 'Published and confirmed.',
+        open: 'Take the case to start writing.',
+        pending: 'Locked while compliance reviews it.',
+        approved: 'Approved — editing would void the sign-off.',
+        sending: 'Sending to the platform…',
+        sent: 'Published. Waiting for the sync to confirm it.',
+        failed: 'The send failed. Retry it, or go back to the draft to change the wording.',
+        verified: 'Published and confirmed.',
+        moderation: 'Being moderated.',
         closed: 'Case closed.',
       } as Partial<Record<string, string>>)[s.status];
 
@@ -138,6 +157,11 @@ export function CaseDrawer({ c, role, email, onClose }: {
               <span className={`chip c-${c.priority}`}>{c.priority}</span>
               <span style={{ marginLeft: 6 }}><SourceBadge source={c.source} /></span>
               <span className="chip c-low" style={{ marginLeft: 6 }}>{track} track</span>
+              {c.sla && (
+                <span className={`chip ${c.sla.breached ? 'c-critical' : 'c-low'}`} style={{ marginLeft: 6 }} title={`Deadline ${c.sla.deadline.slice(0, 16).replace('T', ' ')} UTC`}>
+                  SLA {slaLabel(c.sla)}
+                </span>
+              )}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
               <span className="demo-tag">Acting as</span>
@@ -288,7 +312,7 @@ export function CaseDrawer({ c, role, email, onClose }: {
                   className="btn2 solid" disabled={!sendMove || !!sendMove.block}
                   title={sendMove ? (sendMove.block ?? 'Publish to the platform') : 'Not available in this state'}
                   onClick={() => sendMove && run(sendMove)}
-                >{s.sendState === 'sending' ? 'Sending…' : s.sendState === 'failed' ? 'Retry send' : 'Send the reply'}</button>
+                >{s.status === 'sending' || s.sendState === 'sending' ? 'Sending…' : s.status === 'failed' ? 'Retry send' : 'Send the reply'}</button>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-3)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={simFail} onChange={(e) => setSimFail(e.target.checked)} /> simulate an API failure
                 </label>

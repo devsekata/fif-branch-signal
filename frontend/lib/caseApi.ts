@@ -1,5 +1,5 @@
 import { ApiCallError, apiUrl, postJson } from './api';
-import { newCaseState, type CaseState, type HistoryEntry, type StatusId } from './caseflow';
+import { asState, newCaseState, type CaseState, type HistoryEntry, type StepId } from './caseflow';
 import type { CaseItem } from './types';
 
 /* The workflow half of a case, read from GET /v1/cases/{id} and written by
@@ -8,6 +8,10 @@ import type { CaseItem } from './types';
 
 export interface ReplyResponse {
   status?: string;
+  /** The v0.3 state the case is in after the move. */
+  state?: string;
+  steps?: Partial<Record<StepId, boolean>>;
+  transition_valid?: boolean;
   reply_text?: string;
   severity?: number;
   escalation_level?: number;
@@ -20,6 +24,9 @@ export interface ReplyResponse {
 /** The `workflow` block the case endpoints return. */
 export interface CaseWorkflow {
   status?: string;
+  state?: string;
+  steps?: Partial<Record<StepId, boolean>>;
+  external?: boolean;
   owner?: string | null;
   updated_at?: string | null;
   escalation_level?: number;
@@ -29,19 +36,16 @@ export interface CaseWorkflow {
   reply_text?: string;
 }
 
-const STATUSES: StatusId[] = [
-  'open', 'draft', 'pending', 'rejected', 'escalated', 'manual_reply_submitted', 'resolved', 'closed',
-];
-
-const asStatus = (v: unknown, fallback: StatusId): StatusId =>
-  STATUSES.includes(v as StatusId) ? (v as StatusId) : fallback;
 
 /** Folds whatever the server returned into the state the drawer renders. */
 export function fromServer(local: CaseState, w: CaseWorkflow | ReplyResponse | undefined): CaseState {
   if (!w) return local;
   return {
     ...local,
-    status: asStatus(w.status, local.status),
+    /* The v0.3 state when the server sends one, else the older status read the way the server reads it. */
+    status: asState(w.state ?? w.status, local.status),
+    steps: w.steps && typeof w.steps === 'object' ? { ...local.steps, ...w.steps } : local.steps,
+    external: 'external' in w && typeof w.external === 'boolean' ? w.external || local.external : local.external,
     isFinal: typeof w.is_final === 'boolean' ? w.is_final : local.isFinal,
     owner: typeof w.owner === 'string' && w.owner ? w.owner : local.owner,
     history: Array.isArray(w.history) ? w.history : local.history,
@@ -68,6 +72,8 @@ export function explain(e: unknown): string {
     const body = e.body as { error?: string | { message?: string } } | null;
     const msg = typeof body?.error === 'string' ? body.error : body?.error?.message;
     if (e.status === 403) return `The server refused this step: ${msg ?? 'forbidden by the escalation workflow rules'}.`;
+    /* 422 is the state machine: the move is not one this track allows from where the case stands. */
+    if (e.status === 422) return `The server refused this step: ${msg ?? 'not a move this case can make from here'}.`;
     if (e.status === 404) return 'The server does not know this case.';
     return msg ?? e.message;
   }

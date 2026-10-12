@@ -29,7 +29,7 @@ export function OverviewView() {
       {(d) => (
         <>
           <div className="grid g-58 mb">
-            <Hero view={view} m={d.mix} />
+            <Hero view={view} m={d.mix} why={d.irrelevant_reasons} />
             <Decision view={view} d={d} />
           </div>
 
@@ -71,7 +71,15 @@ function useWhere(view: View) {
     : `across ${n} ${plural(n, 'branch', 'branches')} and the Instagram account`;
 }
 
-function Hero({ view, m }: { view: View; m: Mix }) {
+/* The relevance classifier's own reason codes, in words. An unknown code is shown as it comes. */
+const REASON: Record<string, string> = {
+  no_content: 'no text', engagement_bait: 'engagement bait', gambling: 'gambling', wrong_entity: 'wrong business',
+  job: 'job seeking', unspecified: 'no reason given',
+};
+
+function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n: number }[] }) {
+  /* The three largest reasons say what the category is made of; the rest is a tail of a few items. */
+  const reasons = (why ?? []).slice(0, 3).map((r) => `${r.n.toLocaleString('en-US')} ${REASON[r.reason] ?? r.reason.replace(/_/g, ' ')}`).join(' · ');
   /* Shares are of everything read, so the four categories add up to 100. The score is on the three that are opinions. */
   const all = readOf(m);
   const where = useWhere(view);
@@ -93,7 +101,7 @@ function Hero({ view, m }: { view: View; m: Mix }) {
       <div className="stat-rail" style={{ borderTop: 'none', paddingTop: 0 }}>
         <Stat k="Sentiment score" v={m.score ?? '—'} n="(positive − negative) ÷ total, irrelevant/spam left out" bad={m.score !== null && m.score < 55} />
         <Stat k="Read" v={all.toLocaleString('en-US')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
-        <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={`${m.irrelevant.toLocaleString('en-US')} set aside by the relevance check`} />
+        <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={reasons || `${m.irrelevant.toLocaleString('en-US')} set aside by the relevance check`} />
         <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('en-US')} reviews and comments`} bad={share(m.bad, all) > 15} />
       </div>
       <div style={{ borderTop: '1px solid var(--rule-2)', marginTop: 18, paddingTop: 14 }}>
@@ -202,7 +210,9 @@ function Themes({ view, payload }: { view: View; payload: ComplaintsResponse | u
     ? topics.map((r) => ({ label: r.label, n: r.g + r.s, color: sevColor(r.sev), sub: `severity ${r.sev}` + (r.s ? ` · ${r.g} Google, ${r.s} Instagram` : '') }))
     : mode === 'positive'
     ? praiseInScope(praise, view).map((p) => ({ label: p.label, n: p.n, color: T.grow, sub: 'positive mentions' }))
-    : [];
+    /* Questions are counted for the whole selection: the API has no per-branch split of them. */
+    : (payload?.neutral_topics ?? []).filter((t) => t.google + t.instagram > 0)
+      .map((t) => ({ label: t.label, n: t.google + t.instagram, color: T.ink3, sub: 'questions' + (t.instagram ? ` · ${t.google} Google, ${t.instagram} Instagram` : '') }));
   const top = [...rows].sort((x, y) => y.n - x.n).slice(0, 4);
   const tot = top.reduce((a, r) => a + r.n, 0);
   return (
@@ -210,8 +220,8 @@ function Themes({ view, payload }: { view: View; payload: ComplaintsResponse | u
       <PanelHead title="What they are talking about" tag={tot ? `${tot} mentions` : undefined} />
       <div className="p-note">{THEME_NOTE[mode]}</div>
       <Chips options={THEME_MODES} value={mode} onPick={setMode} />
-      {mode === 'neutral' ? (
-        <Pending>Question topics (promo, requirements, payment channels) are in the taxonomy, but the API does not tag neutral text yet, so there is nothing to count on this side.</Pending>
+      {mode === 'neutral' && !top.length ? (
+        <Pending>Question topics are in the taxonomy, but nothing in this view has been read as a question on one of them. Only promo, requirements and payment-channel questions are told apart so far.</Pending>
       ) : top.length ? top.map((r) => (
         <div key={r.label} className="theme-row" style={{ cursor: 'default' }}>
           <span className="nm">

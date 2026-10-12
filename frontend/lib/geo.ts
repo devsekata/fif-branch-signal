@@ -3,10 +3,12 @@ import type { BranchPlace } from './reference';
 import type { AreaLevel } from './scope';
 import type { Mix, SignalArea, SignalBranch, SignalBranchesResponse } from './types';
 
-/* Boundaries come from the API, which reads public.master_kecamatan: GET /v1/areas/kecamatan for
- * the kecamatan themselves, GET /v1/areas/regions for kab/kota and provinsi outlines merged from
- * them. Coordinates are lon/lat. Which kecamatan a branch belongs to is decided by the API. */
-export interface RegionProps { id: number; nama: string; kabkota?: string; provinsi?: string }
+/* Boundaries come from the API's master tables: GET /v1/areas/kecamatan for the kecamatan, GET
+ * /v1/areas/regions for kab/kota and provinsi outlines. A region is the master's own outline
+ * (source "master") or, where the master holds none, one merged from the kecamatan loaded for it
+ * (source "kecamatan"), which is only as whole as they are. Coordinates are lon/lat. Which area a
+ * branch belongs to is decided by the API. */
+export interface RegionProps { id: number; nama: string; kabkota?: string; provinsi?: string; source?: 'master' | 'kecamatan' }
 export type RegionFeature = Feature<Polygon | MultiPolygon, RegionProps>;
 export type RegionCollection = FeatureCollection<Polygon | MultiPolygon, RegionProps>;
 

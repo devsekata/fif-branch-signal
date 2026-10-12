@@ -75,6 +75,20 @@ export interface ConfigResponse {
   };
   priority_thresholds: Record<Channel, { critical: number; high: number; medium: number }>;
   known_limits: { id: string; applies_to: Channel[]; text: string }[];
+  /** Hours a case of each priority has before it is overdue. */
+  sla_hours?: Record<string, number>;
+  /** Null until the classifier has been measured against a labelled set: unknown, not zero. */
+  classifier_accuracy?: ClassifierAccuracy | null;
+}
+
+export interface AccuracyBand { n: number; precision: number | null; recall: number | null; f1: number | null }
+export interface ClassifierAccuracy {
+  classifier_version: string;
+  taxonomy_version: string;
+  set_version: string;
+  evaluated_at: string;
+  overall: AccuracyBand | null;
+  by_severity: (AccuracyBand & { severity: number })[];
 }
 
 /* ---------- /v1/areas/branches ---------- */
@@ -185,7 +199,11 @@ export interface ComplaintsResponse {
   topic_by_branch: { branches: string[]; matrix: { topic_id: string; counts: number[] }[] };
   sentiment_mix: { positive: number; neutral: number; negative: number; no_text_or_reaction: number };
   terms_negative: { term: string; n: number }[];
+  /** Words of praise counted over every review; absent on an API that does not read l1_gold.terms_positive. */
+  terms_positive?: { term: string; n: number }[];
   praise_drivers: { topic_id: string; label: string; n: number; by_branch: Record<string, number> }[];
+  /** Questions by subject. Counted only for the subjects the relevance classifier names; the rest are zero. */
+  neutral_topics?: { topic_id: string; label: string; google: number; instagram: number }[];
 }
 
 /* ---------- /v1/pages/integrity ---------- */
@@ -205,6 +223,7 @@ export interface IntegrityResponse {
     posting_hours: number[];
     collection_days: CollectionDay[];
     repeat_reviewers: number;
+    repeat_reviewers_note?: string;
     spam_count: number;
     duplicate_count: number;
     suspicious_accounts: number;
@@ -290,11 +309,17 @@ export interface CaseItem {
   /** How criticality was reached. Sent by the API but not described in the spec. */
   score_components?: Partial<Record<'severity' | 'rating' | 'recency' | 'reach' | 'unanswered', number>>;
   priority: Priority;
-  author: { display: string | null; lifetime_reviews: number | null; local_guide: boolean | null; has_photo: boolean | null };
+  author: { display: string | null; lifetime_reviews: number | null; local_guide: boolean | null; has_photo: boolean | null; photos?: number | null };
   brand_replied: boolean;
   first_response_h: number | null;
   permalink: string | null;
-  workflow: { status: string; owner: string | null; updated_at: string | null };
+  workflow: {
+    status: string; owner: string | null; updated_at: string | null;
+    /** Which handling track the API put the case on, and where it stands on it. */
+    track?: string; state?: string;
+    /** Null until the case has been given a deadline. */
+    sla_deadline?: string | null; sla_breached?: boolean; sla_remaining_h?: number | null;
+  };
 }
 
 /* ---------- POST /v1/jobs ---------- */
@@ -360,6 +385,10 @@ export interface SignalOverviewResponse {
   mix: Mix;
   mix_by_source: Record<Channel, Mix>;
   neutral_rating_only: number;
+  /** Text the relevance classifier read as a question. */
+  neutral_questions?: number;
+  /** The irrelevant/spam items by the reason the relevance classifier gave, largest first. */
+  irrelevant_reasons?: { reason: string; n: number }[];
   headline: {
     items_read: number;
     complaints: number;
@@ -432,6 +461,12 @@ export interface SignalBranch extends Mix {
   lat: number | null;
   lng: number | null;
   postal_code: string | null;
+  /** Null until the branch has been synced with Google's place details. */
+  phone?: string | null;
+  /** The owner's average hours to a first reply; null where no reply has a date. */
+  avg_response_hours?: number | null;
+  /** Google's opening hours; an empty array when Google publishes none. */
+  opening_hours?: { weekdayDescriptions?: string[] } | unknown[] | null;
   google_score: number | null;
   reviews_universe: number | null;
   reviews_read: number;

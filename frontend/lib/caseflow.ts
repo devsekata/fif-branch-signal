@@ -1,18 +1,19 @@
-/* Reply lifecycle for a case.
+/* Reply lifecycle for a case, after fif_metric_spec.md §7 as the API implements it
+ * (fif-api src/utils/workflow.ts).
  *
- * Statuses are the API's own eight, checked against POST /v1/cases/{case_id}/reply on
- * 28 Sep 2026: anything else comes back 400 "Invalid status", and validation runs before the
- * case is even looked up. So a status pill sends its own name and there is no translation
- * layer to drift out of step.
+ * The states and the order of each track are the API's own, and every move is posted as
+ * `state`, which the API checks against its state machine: a move it does not allow comes back
+ * 422 with the states that are allowed, and nothing is changed. The role rules below mirror the
+ * server's so the drawer offers only what will be accepted; the server stays the judge.
  *
- * Two things the API has no status for sit beside it rather than inside it. `isFinal` carries
- * is_final, which is how Compliance approval is recorded. `sendState` covers the seconds around
- * a request, which is a property of the request, not of the case. */
+ * `isFinal` is the older is_final flag, still sent so the server's older rule (a CX HO sends
+ * severity 4 wording only after Compliance approved it) keeps working. `sendState` covers the
+ * seconds around a request, which is a property of the request, not of the case. */
 
 export type RoleId = 'branch' | 'cx' | 'comp';
 export type StatusId =
-  | 'open' | 'draft' | 'pending' | 'rejected'
-  | 'escalated' | 'manual_reply_submitted' | 'resolved' | 'closed';
+  | 'open' | 'triaged' | 'draft' | 'pending' | 'approved'
+  | 'sending' | 'sent' | 'failed' | 'verified' | 'moderation' | 'closed';
 export type TrackId = 'service' | 'conduct' | 'doxing' | 'silent';
 export type StepId = 'hidden' | 'reported' | 'legal';
 export type SendState = 'idle' | 'sending' | 'failed';
@@ -30,20 +31,35 @@ export const ROLE_LEVEL: Record<RoleId, 1 | 2 | 3> = { branch: 1, cx: 2, comp: 3
 
 export const STATE: Record<StatusId, { label: string; tone: '' | 'warn' | 'ok' | 'bad' }> = {
   open: { label: 'Open', tone: '' },
+  triaged: { label: 'Triaged', tone: '' },
   draft: { label: 'Draft', tone: '' },
   pending: { label: 'Pending approval', tone: 'warn' },
-  rejected: { label: 'Sent back', tone: 'bad' },
-  escalated: { label: 'Escalated', tone: 'bad' },
-  manual_reply_submitted: { label: 'Posted manually', tone: 'ok' },
-  resolved: { label: 'Resolved', tone: 'ok' },
+  approved: { label: 'Approved', tone: 'ok' },
+  sending: { label: 'Sending', tone: 'warn' },
+  sent: { label: 'Sent', tone: 'ok' },
+  failed: { label: 'Send failed', tone: 'bad' },
+  verified: { label: 'Verified', tone: 'ok' },
+  moderation: { label: 'In moderation', tone: 'bad' },
   closed: { label: 'Closed', tone: 'ok' },
 };
 
-/** Which lifecycle a case follows. Decided by topic, never by role. */
+/** Older statuses the API may still hold, read as the state each stands for (the API's stateOf). */
+const LEGACY: Record<string, StatusId> = {
+  escalated: 'pending', rejected: 'draft', manual_reply_submitted: 'sent', resolved: 'verified',
+};
+
+/** The state a stored status or state value stands for. */
+export function asState(v: unknown, fallback: StatusId = 'open'): StatusId {
+  if (typeof v !== 'string') return fallback;
+  if (v in STATE) return v as StatusId;
+  return LEGACY[v] ?? fallback;
+}
+
+/** Which lifecycle a case follows, in the order the API checks it. Decided by topic, never by role. */
 export const TRACKS: Record<TrackId, StatusId[]> = {
-  service: ['open', 'draft', 'manual_reply_submitted', 'resolved', 'closed'],
-  conduct: ['open', 'draft', 'pending', 'rejected', 'manual_reply_submitted', 'resolved', 'closed'],
-  doxing: ['open', 'escalated', 'closed'],
+  service: ['open', 'triaged', 'draft', 'sending', 'sent', 'verified', 'closed'],
+  conduct: ['open', 'triaged', 'draft', 'pending', 'approved', 'sending', 'sent', 'verified', 'closed'],
+  doxing: ['open', 'moderation', 'closed'],
   silent: ['open', 'closed'],
 };
 
@@ -57,90 +73,80 @@ export interface Move {
   desc: string;
   needsDraft?: boolean;
   needsSteps?: StepId[];
-  /** Only while nobody has taken the case. */
-  needsUnowned?: boolean;
-  /** Only once Compliance has approved, or only while it has not. */
-  needsFinal?: boolean;
-  needsNotFinal?: boolean;
-  /** Records the approval instead of moving the case on. */
+  /** Records the approval on the older is_final flag as well. */
   setsFinal?: boolean;
   step?: StepId;
   kind?: 'primary' | 'danger';
-  /** Goes through the platform, so the status waits on a request. */
+  /** Goes out to the platform: the case passes through `sending` and lands on `sent` or `failed`. */
   async?: boolean;
+  /** A reply found on the platform that did not come from the dashboard (the API's `external`). */
+  external?: boolean;
 }
 
-/* Every transition the UI can offer. `roles` is who may perform it.
- * Role rules follow Mas Aan's guideline of 24 Sep 2026, with one override from Hapsoro on
- * 28 Sep: closing is Compliance only on every track. */
+const ALL: RoleId[] = ['branch', 'cx', 'comp'];
+const HO: RoleId[] = ['cx', 'comp'];
+
+/* Every transition the UI can offer, each one the API's nextStates() allows. `roles` is who the
+ * API lets take it: a branch user never closes, reopens, approves or sends conduct wording, and
+ * a CX HO never approves or rejects conduct wording or closes a conduct or doxing case. */
 export const MOVES: Move[] = [
-  { id: 'triage', from: ['open'], to: 'open', roles: ['branch', 'cx', 'comp'], tracks: ['service', 'conduct'],
-    needsUnowned: true, label: 'Take the case', desc: 'Assign it to yourself and start work.' },
+  { id: 'triage', from: ['open'], to: 'triaged', roles: ALL, tracks: ['service', 'conduct'],
+    label: 'Take the case', desc: 'Assign it to yourself and start work.', kind: 'primary' },
+  { id: 'save_draft', from: ['triaged'], to: 'draft', roles: ALL, tracks: ['service', 'conduct'], needsDraft: true,
+    label: 'Save the draft', desc: 'Stores the wording on the case so the next person sees it.', kind: 'primary' },
 
   /* ---- service ---- */
-  { id: 'send', from: ['draft'], to: 'resolved', roles: ['branch', 'cx', 'comp'], tracks: ['service'],
-    label: 'Send the reply', desc: 'Publishes straight to the platform through the API.',
-    needsDraft: true, kind: 'primary', async: true },
-  { id: 'mark_sent', from: ['draft'], to: 'manual_reply_submitted', roles: ['branch', 'cx', 'comp'], tracks: ['service'],
-    label: 'Mark as posted manually', desc: 'You pasted the reply into the platform yourself. Recorded as posted, not yet confirmed.',
-    needsDraft: true },
+  { id: 'send', from: ['draft'], to: 'sending', roles: ALL, tracks: ['service'], needsDraft: true, async: true, kind: 'primary',
+    label: 'Send the reply', desc: 'Publishes straight to the platform.' },
+  { id: 'mark_sent', from: ['draft'], to: 'sent', roles: ALL, tracks: ['service'], needsDraft: true,
+    label: 'Mark as posted manually', desc: 'You pasted the reply into the platform yourself. Recorded as sent, not yet verified.' },
 
-  /* ---- conduct: severity 4 needs Compliance sign-off before anything is published ---- */
-  { id: 'submit', from: ['draft'], to: 'pending', roles: ['branch', 'cx'], tracks: ['conduct'],
-    label: 'Submit for compliance approval', desc: 'Severity 4 wording cannot be published without sign-off.',
-    needsDraft: true, kind: 'primary' },
-    /* Compliance writing its own severity 4 reply is the sign-off, so it publishes directly. */
-  { id: 'send_comp', from: ['draft'], to: 'resolved', roles: ['comp'], tracks: ['conduct'],
-    label: 'Send the reply', desc: 'Your own wording counts as the sign-off. Publishes through the API with is_final true.',
-    needsDraft: true, setsFinal: true, kind: 'primary', async: true },
-  { id: 'mark_sent_comp', from: ['draft'], to: 'manual_reply_submitted', roles: ['comp'], tracks: ['conduct'],
-    label: 'Mark as posted manually', desc: 'You pasted your own signed-off wording into the platform yourself.',
-    needsDraft: true, setsFinal: true },
-  { id: 'approve', from: ['pending'], to: 'pending', roles: ['comp'], tracks: ['conduct'],
-    needsNotFinal: true, setsFinal: true, kind: 'primary',
-    label: 'Approve the wording', desc: 'Clears the draft for publication exactly as written. Sends is_final true.' },
-  { id: 'reject', from: ['pending'], to: 'rejected', roles: ['comp'], tracks: ['conduct'],
-    label: 'Send back for rewrite', desc: 'Returns it to the author with your note attached.', kind: 'danger' },
-  { id: 'rewrite', from: ['rejected'], to: 'draft', roles: ['branch', 'cx'], tracks: ['conduct'],
-    label: 'Rewrite the draft', desc: 'Reopens the composer so the wording can be changed.', kind: 'primary' },
-  { id: 'send_appr', from: ['pending'], to: 'resolved', roles: ['cx', 'comp'], tracks: ['conduct'],
-    label: 'Send the approved reply', desc: 'Publishes the signed-off wording through the API.',
-    needsDraft: true, needsFinal: true, kind: 'primary', async: true },
-  { id: 'mark_sent_appr', from: ['pending'], to: 'manual_reply_submitted', roles: ['cx', 'comp'], tracks: ['conduct'],
-    label: 'Mark as posted manually', desc: 'The approved wording was published by hand rather than through the API.',
-    needsDraft: true, needsFinal: true },
+  /* ---- conduct: severity 4 wording needs Compliance sign-off before anything is published ---- */
+  { id: 'submit', from: ['draft'], to: 'pending', roles: ALL, tracks: ['conduct'], needsDraft: true, kind: 'primary',
+    label: 'Submit for compliance approval', desc: 'Severity 4 wording cannot be published without sign-off.' },
+  { id: 'approve', from: ['pending'], to: 'approved', roles: ['comp'], tracks: ['conduct'], setsFinal: true, kind: 'primary',
+    label: 'Approve the wording', desc: 'Clears the draft for publication exactly as written.' },
+  { id: 'reject', from: ['pending'], to: 'draft', roles: ['comp'], tracks: ['conduct'], kind: 'danger',
+    label: 'Send back for rewrite', desc: 'Returns it to the author with your note attached.' },
+  { id: 'send_appr', from: ['approved'], to: 'sending', roles: HO, tracks: ['conduct'], needsDraft: true, async: true, kind: 'primary',
+    label: 'Send the approved reply', desc: 'Publishes the signed-off wording.' },
+  { id: 'mark_sent_appr', from: ['approved'], to: 'sent', roles: HO, tracks: ['conduct'], needsDraft: true,
+    label: 'Mark as posted manually', desc: 'The approved wording was published by hand.' },
+
+  /* ---- a send that failed ---- */
+  { id: 'retry', from: ['failed'], to: 'sending', roles: ALL, tracks: ['service'], needsDraft: true, async: true, kind: 'primary',
+    label: 'Retry the send', desc: 'Tries the platform again with the same wording.' },
+  { id: 'retry_c', from: ['failed'], to: 'sending', roles: HO, tracks: ['conduct'], needsDraft: true, async: true, kind: 'primary',
+    label: 'Retry the send', desc: 'Tries the platform again with the approved wording.' },
+  { id: 'redraft', from: ['failed'], to: 'draft', roles: ALL, tracks: ['service', 'conduct'],
+    label: 'Back to the draft', desc: 'Change the wording before trying again.' },
 
   /* ---- confirming ---- */
-  { id: 'sync', from: ['manual_reply_submitted'], to: 'resolved', roles: ['branch', 'cx', 'comp'],
-    tracks: ['service', 'conduct'], kind: 'primary',
-    label: 'Run the next sync', desc: 'Re-reads the platform and confirms the reply is really there. In production this is the nightly job, not a button.' },
-  { id: 'external', from: ['open', 'draft', 'pending'], to: 'resolved', roles: ['branch', 'cx', 'comp'],
-    tracks: ['service', 'conduct'],
+  { id: 'verify', from: ['sent'], to: 'verified', roles: ALL, tracks: ['service', 'conduct'], kind: 'primary',
+    label: 'Confirm it is live', desc: 'The reply was found on the platform. In production the sync does this, not a button.' },
+  { id: 'external', from: ['open', 'triaged', 'draft', 'pending', 'approved'], to: 'verified', roles: ALL,
+    tracks: ['service', 'conduct'], external: true,
     label: 'Someone replied outside the dashboard', desc: 'The sync found a reply that did not originate here.' },
 
   /* ---- doxing: the composer is locked by policy, and no role unlocks it ---- */
-  { id: 'hide', from: ['open', 'escalated'], to: 'escalated', roles: ['cx', 'comp'], tracks: ['doxing'],
-    label: 'Hide the comment', desc: 'Removes it from public view without notifying the author.', kind: 'danger', step: 'hidden' },
-  { id: 'report', from: ['open', 'escalated'], to: 'escalated', roles: ['cx', 'comp'], tracks: ['doxing'],
-    label: 'Report to Meta', desc: 'Files a privacy violation report for exposed personal data.', kind: 'danger', step: 'reported' },
-  { id: 'legal', from: ['open', 'escalated'], to: 'escalated', roles: ['comp'], tracks: ['doxing'],
-    label: 'Escalate to legal', desc: 'Hands the case over with the archived capture attached.', kind: 'danger', step: 'legal' },
+  { id: 'hide', from: ['open', 'moderation'], to: 'moderation', roles: HO, tracks: ['doxing'], kind: 'danger', step: 'hidden',
+    label: 'Hide the comment', desc: 'Removes it from public view without notifying the author.' },
+  { id: 'report', from: ['open', 'moderation'], to: 'moderation', roles: HO, tracks: ['doxing'], kind: 'danger', step: 'reported',
+    label: 'Report to Meta', desc: 'Files a privacy violation report for exposed personal data.' },
+  { id: 'legal', from: ['open', 'moderation'], to: 'moderation', roles: ['comp'], tracks: ['doxing'], kind: 'danger', step: 'legal',
+    label: 'Escalate to legal', desc: 'Hands the case over with the archived capture attached.' },
 
-  /* Closing follows Mas Aan's guideline, which the server turned out to enforce too: CX HO may
-   * close a service case and a no-action one, but never severity 4 or doxing. Probed 28 Sep 2026
-   * — the server answers 403 "CX HO is not permitted to close severity 4 or doxing cases". */
-  { id: 'no_action', from: ['open'], to: 'closed', roles: ['cx', 'comp'], tracks: ['silent', 'service'],
+  /* ---- closing ---- */
+  { id: 'no_action', from: ['open'], to: 'closed', roles: HO, tracks: ['silent'],
     label: 'Close, no action needed', desc: 'A rating with no text carries nothing to answer.' },
-  { id: 'close', from: ['resolved'], to: 'closed', roles: ['cx', 'comp'], tracks: ['service'],
-    label: 'Close the case', desc: 'Reply confirmed live. Nothing outstanding.', kind: 'primary' },
-  { id: 'close_c', from: ['resolved'], to: 'closed', roles: ['comp'], tracks: ['conduct'],
-    label: 'Close the case', desc: 'Severity 4 cases are closed by compliance only.', kind: 'primary' },
-  { id: 'close_m', from: ['escalated'], to: 'closed', roles: ['comp'], tracks: ['doxing'],
-    label: 'Close the case', desc: 'Only once the comment is hidden and reported.', kind: 'primary',
-    needsSteps: ['hidden', 'reported'] },
+  { id: 'close', from: ['verified'], to: 'closed', roles: HO, tracks: ['service'], kind: 'primary',
+    label: 'Close the case', desc: 'Reply confirmed live. Nothing outstanding.' },
+  { id: 'close_c', from: ['verified'], to: 'closed', roles: ['comp'], tracks: ['conduct'], kind: 'primary',
+    label: 'Close the case', desc: 'Severity 4 cases are closed by Compliance only.' },
+  { id: 'close_m', from: ['moderation'], to: 'closed', roles: ['comp'], tracks: ['doxing'], kind: 'primary',
+    needsSteps: ['hidden', 'reported'], label: 'Close the case', desc: 'Only once the comment is hidden and reported.' },
 
-  { id: 'reopen', from: ['closed'], to: 'open', roles: ['cx', 'comp'],
-    tracks: ['service', 'conduct', 'doxing', 'silent'],
+  { id: 'reopen', from: ['closed'], to: 'open', roles: HO, tracks: ['service', 'conduct', 'doxing', 'silent'],
     label: 'Reopen', desc: 'Something new surfaced on the same case.' },
 ];
 
@@ -166,11 +172,11 @@ export const TEMPLATES: Record<'conduct' | 'service', { id: string; label: strin
 
 export interface CaseState {
   status: StatusId;
-  /** is_final in the API. Compliance approval is recorded here, not as a status. */
+  /** is_final in the API: Compliance has approved the wording. */
   isFinal: boolean;
-  /** Where a platform request has got to. Never sent to the API. */
+  /** Where a request to the server has got to. Never sent to the API. */
   sendState: SendState;
-  /** The move a failed send would retry, so retry inherits that move's permissions. */
+  /** The move the last request was for, so a refused one can be explained. */
   pendingMove: string | null;
   draft: string;
   templateId: string;
@@ -201,7 +207,7 @@ export const newCaseState = (): CaseState => ({
   apiError: null,
 });
 
-/** What a case is scored and handled as. Topic decides, not the person looking at it. */
+/** What a case is handled as when the API sent no track. Topic decides, not the person looking at it. */
 export function trackOf(input: { topicIds: string[]; topicLabels: string[]; severity: number; hasText: boolean }): TrackId {
   const hay = [...input.topicIds, ...input.topicLabels].join(' ');
   if (/doxing|data_pribadi|data pribadi/i.test(hay)) return 'doxing';
@@ -213,23 +219,20 @@ export function trackOf(input: { topicIds: string[]; topicLabels: string[]; seve
 export interface OfferedMove extends Move { block: string | null }
 
 /** The single move that lands on `status`, or null when none or several do. Several means the
- *  pill cannot stand for one action — doxing reaches `escalated` by hide, report or legal — so
+ *  pill cannot stand for one action — doxing reaches `moderation` by hide, report or legal — so
  *  it stays inert and the choice is made from the action list. */
 export function moveToStatus(offered: OfferedMove[], status: StatusId): OfferedMove | null {
   const hits = offered.filter((m) => m.to === status);
   return hits.length === 1 ? hits[0] : null;
 }
 
-/** Every move reachable from the current status, each with the reason it cannot be taken. */
+/** Every move reachable from the current state, each with the reason it cannot be taken. */
 export function movesFor(s: CaseState, track: TrackId, role: RoleId): OfferedMove[] {
   return MOVES.filter((m) => m.tracks.includes(track) && m.from.includes(s.status)).map((m) => {
     let block: string | null = null;
     if (m.step && s.steps[m.step]) block = 'already done';
-    else if (m.needsUnowned && s.owner) block = 'already taken';
-    else if (m.needsNotFinal && s.isFinal) block = 'already approved';
     else if (!m.roles.includes(role)) block = `${m.roles.map(roleName).join(' or ')} only`;
     else if (m.needsDraft && !s.draft.trim()) block = 'write the reply first';
-    else if (m.needsFinal && !s.isFinal) block = 'needs compliance approval first';
     else if (m.needsSteps && m.needsSteps.some((x) => !s.steps[x])) {
       block = `needs ${m.needsSteps.filter((x) => !s.steps[x]).join(' and ')} first`;
     }
@@ -238,49 +241,42 @@ export function movesFor(s: CaseState, track: TrackId, role: RoleId): OfferedMov
 }
 
 const EXTRA: Record<string, string> = {
-  sync: 'Simulated here. In production this is the nightly sync, and the platform is the source of truth, not this dashboard.',
+  verify: 'Simulated here. In production the sync confirms it, and the platform is the source of truth, not this dashboard.',
   external: 'Reply found on the platform with no record of being sent from here.',
-  approve: 'Recorded as is_final true. The wording is locked from here.',
+  approve: 'The wording is locked from here.',
 };
 
 /** Which level a move hands the case to next. null when it stays where it is.
  *
- * `approve` deliberately sends null. Probed against the live API on 28 Sep 2026: the server
- * reads status `pending` carrying any escalation_to as "submitting a draft for approval" and
- * answers 403 "Compliance is not permitted to submit drafts for approval". With null it is
- * accepted and is_final sticks. */
-export function escalationTo(m: Move): 1 | 2 | 3 | null {
-  if (m.id === 'submit') return 3;      // to Compliance for sign-off
-  if (m.id === 'reject') return 1;      // back to the author
-  if (m.step) return 3;                 // doxing stays with Compliance
+ * Only submit, reject and the doxing steps hand over. The server refuses a Compliance user who
+ * sends `pending` or `draft` with any escalation_to ("not permitted to submit drafts for
+ * approval"), so everything else sends null. */
+export function escalationTo(m: Move, role: RoleId): 1 | 2 | 3 | null {
+  if (m.id === 'submit') return role === 'comp' ? null : 3;
+  if (m.id === 'reject') return null;
+  if (m.step) return 3;
   return null;
 }
 
-/** Applies a move. Returns a new state; the caller owns rendering and the async send. */
+/** Applies a move the server accepted. Returns a new state; the caller owns rendering. */
 export function applyMove(s: CaseState, m: Move, role: RoleId, note?: string, email?: string): CaseState {
   const next: CaseState = { ...s, steps: { ...s.steps }, trail: [...s.trail], history: [...s.history] };
   if (m.id === 'reject') next.note = note?.trim() || 'Needs rewrite';
   else if (m.id !== 'reopen') next.note = '';
   if (m.step) next.steps[m.step] = true;
-  if (m.id === 'external') next.external = true;
+  if (m.external) next.external = true;
   if (m.setsFinal) next.isFinal = true;
+  if (m.id === 'reject' || m.id === 'redraft') next.isFinal = false;
   if (!next.owner && m.to !== 'closed') next.owner = roleName(role);
   if (m.id === 'reopen') {
-    next.steps = {}; next.external = false; next.isFinal = false; next.sendState = 'idle'; next.pendingMove = null;
+    next.steps = {}; next.external = false; next.isFinal = false;
   }
-  if (m.id === 'rewrite') next.isFinal = false;
-
-  /* An async move holds the status where it is until the platform answers. */
-  if (m.async) {
-    next.sendState = 'sending';
-    next.pendingMove = m.id;
-  } else {
-    next.status = m.to;
-  }
-
+  next.status = m.to;
+  next.sendState = 'idle';
+  next.pendingMove = null;
   next.history.push({
     escalation_level: ROLE_LEVEL[role],
-    escalation_to: escalationTo(m),
+    escalation_to: escalationTo(m, role),
     owner: email ?? roleName(role),
     updated_at: new Date().toISOString(),
     status: next.status,
@@ -288,26 +284,22 @@ export function applyMove(s: CaseState, m: Move, role: RoleId, note?: string, em
   return logTo(next, m.label, m.id === 'reject' ? next.note : EXTRA[m.id] ?? '', role);
 }
 
-/** Resolves a send that was waiting on the platform. */
-export function finishSend(s: CaseState, ok: boolean, role: RoleId, platform: string): CaseState {
-  if (s.sendState !== 'sending') return s;
-  const m = MOVES.find((x) => x.id === s.pendingMove);
-  if (!m) return { ...s, sendState: 'idle', pendingMove: null };
-  if (!ok) {
-    return logTo({ ...s, sendState: 'failed' }, 'Send failed',
-      'API returned an error. The wording is kept; retry or post it manually.', role);
-  }
-  return logTo({ ...s, status: m.to, sendState: 'idle', pendingMove: null }, 'Reply published',
-    `Delivered through the ${platform} API. Not yet confirmed by a sync.`, role);
-}
+/** The second half of a send: the platform answered, and the case moves from `sending` on. */
+export const SENT: Move = {
+  id: 'sent', from: ['sending'], to: 'sent', roles: ALL, tracks: ['service', 'conduct'],
+  label: 'Reply published', desc: 'The platform accepted the reply. Not yet verified by a sync.',
+};
+export const FAILED: Move = {
+  id: 'failed', from: ['sending'], to: 'failed', roles: ALL, tracks: ['service', 'conduct'],
+  label: 'Send failed', desc: 'The platform returned an error. The wording is kept; retry or post it manually.',
+};
 
-/** Only these statuses let the composer be edited; the rest are locked mid-flow. */
-export const EDITABLE: StatusId[] = ['open', 'draft'];
+/** Only these states let the composer be edited; the rest are locked mid-flow. */
+export const EDITABLE: StatusId[] = ['triaged', 'draft'];
 
-/** Writing into an untouched case is itself a transition: it becomes a draft. */
+/** Writing changes the wording only. Saving it is a move of its own, so the server keeps the order. */
 export function withDraft(s: CaseState, text: string, templateId = s.templateId): CaseState {
-  const status: StatusId = text.trim() && s.status === 'open' ? 'draft' : s.status;
-  return { ...s, draft: text, templateId, status };
+  return { ...s, draft: text, templateId };
 }
 
 export function logTo(s: CaseState, text: string, extra: string, role: RoleId): CaseState {
@@ -326,16 +318,19 @@ export const SCORE_LABEL: Record<string, string> = {
   unanswered: 'No public reply', negative: 'Negative root', thread_heat: 'Thread heat', pile_on: 'Pile-on',
 };
 
-/** Exactly what a move would POST to /v1/cases/{case_id}/reply, once that call is wired. */
+/** What a move POSTs to /v1/cases/{case_id}/reply: the target `state`, checked by the server's state machine. */
 export function replyBody(s: CaseState, m: Move, role: RoleId, severity: number, email: string) {
+  const steps = m.step ? { [m.step]: true } : undefined;
   return {
-    status: m.async ? m.to : s.status,
+    state: m.to,
     reply_text: s.draft || undefined,
     severity,
     escalation_level: ROLE_LEVEL[role],
-    escalation_to: escalationTo(m),
-    is_final: m.setsFinal ? true : s.isFinal,
+    escalation_to: escalationTo(m, role),
+    is_final: m.setsFinal ? true : m.id === 'reject' || m.id === 'redraft' || m.id === 'reopen' ? false : s.isFinal,
     owner: email,
     history: s.history,
+    ...(steps ? { steps } : {}),
+    ...(m.external ? { external: true } : {}),
   };
 }
