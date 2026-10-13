@@ -117,47 +117,50 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
   const areas = useMemo(() => toAreas(data, level), [data, level]);
   const byName = useMemo(() => new Map(areas.map((a) => [a.name, a])), [areas]);
 
-  /* Provinces and kab/kota are polygons only: a point per branch buries the areas being compared.
-   * The branches appear at kecamatan level, drawn as points on the kecamatan heatmap. */
-  const outline = level === 'kecamatan';
+  /* Areas are coloured until one kecamatan is chosen: provinces, then the kab/kota of a province, then
+   * the kecamatan of a kota. Only inside a chosen kecamatan do the branches appear, as points, with
+   * the kecamatan reduced to borders so the points carry the colour. */
+  const outline = level === 'kecamatan' && !!focus;
   const drawn = useMemo(() => new Set(features.map((f) => f.properties.nama)), [features]);
   const markers = useMemo(() => {
     const located = points.filter((p) => p.place.lat != null && p.place.lng != null);
     if (!boundaries.data) return [];
-    return level === 'kecamatan' ? located : [];
-  }, [points, level, boundaries.data]);
+    return outline ? located.filter((p) => p.place.kecamatan === focus) : [];
+  }, [points, outline, focus, boundaries.data]);
   const noBoundary = useMemo(() => (boundaries.data ? [...new Set(placed.map((p) => p.place[level]).filter((n): n is string => !!n && !drawn.has(n)))] : []), [placed, level, drawn, boundaries.data]);
   const ranked = useMemo(() => points.filter((p) => p.enough).length, [points]);
 
   /* The area being looked inside: the province at kota level, the kota at kecamatan level. */
   const focusArea = useMemo(() => {
+    /* A chosen kecamatan is the frame; its neighbours stay drawn around it as borders. */
+    if (outline) return features.find((f) => f.properties.nama === focus) ?? null;
     if (level === 'kota') {
       const all = [...(provinsi.data?.features ?? []), ...(shippedProvinces?.features ?? [])];
       return all.find((f) => provKey(f.properties.nama) === provKey(sel.province ?? '')) ?? null;
     }
+    /* A kota is framed by its kecamatan, which trace it closely; its master outline is a rough polygon. */
+    if (level === 'kecamatan' && sel.kota && features.length) return null;
     if (level === 'kecamatan' && sel.kota) {
       const all = [...(kabkota.data?.features ?? []), ...(shippedKota?.features ?? [])].filter((f) => provKey(f.properties.provinsi) === provKey(sel.province ?? ''));
       const low = sel.kota.toLowerCase();
       return all.find((f) => f.properties.nama.toLowerCase() === low) ?? all.find((f) => bare(f.properties.nama) === bare(sel.kota!)) ?? null;
     }
     return null;
-  }, [level, sel.province, sel.kota, provinsi.data, kabkota.data, shippedProvinces, shippedKota]);
+  }, [outline, features, focus, level, sel.province, sel.kota, provinsi.data, kabkota.data, shippedProvinces, shippedKota]);
 
   /* A drill changes the level at once, but its outlines and figures arrive later. Until both are in,
    * the map keeps showing what it had, so it never empties and falls back to the whole country. */
   const ready = !!boundaries.data && !boundaries.loading && !loading && (level === 'kecamatan' || !!shipped)
     && (level !== 'kota' || !!shippedProvinces) && (level !== 'kecamatan' || (!kabkota.loading && !!shippedKota));
-  const next = useMemo(() => ({ features, areas: byName, national: level === 'province', outline, points: markers, focus, area: focusArea }),
+  /* Only the province is outlined: a kota's or a kecamatan's own outline in the master is far coarser than the kecamatan drawn inside it. */
+  const next = useMemo(() => ({ features, areas: byName, national: level === 'province', outline, points: markers, focus, area: focusArea, areaEdge: level === 'kota' }),
     [features, byName, level, outline, markers, focus, focusArea]);
   const [drawnMap, setDrawnMap] = useState(next);
   if (ready && drawnMap !== next) setDrawnMap(next);
   const openBranch = useCallback((id: string) => router.push(branchHref(id)), [router]);
 
-  const drill = useCallback((name: string) => {
-    setFilter('scope', pickScope(level, name, places));
-    /* A kecamatan is as far as the map goes; the branches inside it are listed on Area & Branch. */
-    if (level === 'kecamatan') router.push('/branches');
-  }, [level, places, router, setFilter]);
+  /* A kecamatan is the last step: choosing one shows its branches on the map. */
+  const drill = useCallback((name: string) => setFilter('scope', pickScope(level, name, places)), [level, places, setFilter]);
 
   const title = level === 'province' ? 'Indonesia — by province'
     : level === 'kota' ? `${sel.province} — by kota and kabupaten`
@@ -188,11 +191,10 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
       <div className="panel mb" style={{ paddingBottom: 0 }}>
         <div className="p-head"><h3>{title}</h3><Chips flush options={GEO_METRICS} value={metric} onPick={setMetric} /></div>
         <div className="p-note">
-          {focus && <><b style={{ color: 'var(--ink)' }}>Scoped to {view.scopeName}.</b> The map stays at kecamatan level so you can see it in context — everything outside the scope is dimmed, not hidden. </>}
-          Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise.{' '}
+          {focus && <><b style={{ color: 'var(--ink)' }}>Scoped to {view.scopeName}.</b> The map stays at kecamatan level so you can see it in context; the scoped kecamatan and its branches carry a heavier outline. </>}
           {outline
-            ? 'Each branch is drawn on its kecamatan as a point: colour is sentiment, size is review volume. Click a point to open the branch.'
-            : 'Click an area that holds branches to drill in; the branches themselves appear at kecamatan level.'}
+            ? 'Kecamatan are drawn as borders only; the colour is on the branches. Each point is a branch: colour is its sentiment score, size is review volume, grey is under the minimum review count. Click a point to open the branch, or another kecamatan to move to it.'
+            : `Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise. Click an area that holds branches to drill in; the branches appear once a kecamatan is chosen.`}
           {noBoundary.length > 0 && ` No boundary geometry for ${noBoundary.length > 4 ? `${noBoundary.length} ${LEVEL_PLURAL[level].toLowerCase()}` : noBoundary.join(', ')}, so ${level === 'kecamatan'
             ? `only ${plural(noBoundary.length, 'its', 'their')} branch points show`
             : `${plural(noBoundary.length, 'it is', 'they are')} missing from the map and listed in the table below`}.`}
@@ -203,7 +205,7 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
           : (
             <div className="geo-stage">
               <GeoMap features={drawnMap.features} areas={drawnMap.areas} metric={metric} national={drawnMap.national} outline={drawnMap.outline}
-                points={drawnMap.points} ranked={ranked} focus={drawnMap.focus} area={drawnMap.area} onPick={drill} onBranch={openBranch} />
+                points={drawnMap.points} ranked={ranked} focus={drawnMap.focus} area={drawnMap.area} areaEdge={drawnMap.areaEdge} onPick={drill} onBranch={openBranch} />
               {!ready && (
                 <div className="geo-loading" role="status">
                   <span className="geo-spin" aria-hidden="true" />
@@ -212,7 +214,7 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
               )}
             </div>
           )}
-        <Legend metric={metric} points={markers.length > 0} polygons={features.length > 0} />
+        <Legend metric={metric} points={markers.length > 0} polygons={!outline && features.length > 0} />
         <MapNote areas={areas} level={level} />
         <div style={{ height: 16 }} />
       </div>

@@ -14,7 +14,7 @@ export interface GeoMapProps {
   metric: GeoMetric;
   /** National view keeps the whole archipelago in frame; the levels below fit to the bulk of what is drawn. */
   national: boolean;
-  /** Kecamatan level: the polygons are coloured as everywhere else, and the branches are drawn on them as points. */
+  /** Kecamatan level: the kecamatan are borders only, and the branches on them carry the colour. */
   outline: boolean;
   /** Branches drawn as points: colour is sentiment, size is review volume. */
   points: BranchPoint[];
@@ -22,8 +22,10 @@ export interface GeoMapProps {
   ranked: number;
   /** A kecamatan the scope has narrowed to; the rest is dimmed, not hidden. */
   focus: string | null;
-  /** The province or kota being looked inside. Everything outside it is masked and the frame is fitted to it. */
+  /** The province, kota or kecamatan being looked inside. The frame is fitted to it. */
   area?: RegionFeature | null;
+  /** Draw the area's own outline. Off where the areas drawn inside it already trace it more closely. */
+  areaEdge?: boolean;
   onPick: (name: string) => void;
   onBranch: (branchId: string) => void;
 }
@@ -156,12 +158,12 @@ function bulkBounds(features: RegionFeature[], share: number): L.LatLngBounds | 
 const INDONESIA: L.LatLngBoundsExpression = [[-11, 95], [6, 141]];
 /* The zoom is capped per level: national has to hold the whole archipelago, a single province or
  * kota should fill the frame rather than be zoomed into one street. */
-const MAX_ZOOM = { national: 6, area: 11, branches: 13 };
+const MAX_ZOOM = { national: 6, area: 13, branches: 14 };
 
 const located = (p: BranchPoint) => p.place.lat != null && p.place.lng != null;
 
 /** One administrative level as a choropleth, with branches as points. Leaflet needs `window`, so load this with `ssr: false`. */
-export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, area, onPick, onBranch }: GeoMapProps) {
+export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, area, areaEdge = true, onPick, onBranch }: GeoMapProps) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   /* Kept in refs so re-binding a click handler does not redraw the layers. */
@@ -191,13 +193,12 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     const style = (f?: RegionFeature): L.PathOptions => {
       const name = f?.properties.nama;
       const a = name ? areas.get(name) : undefined;
-      /* A kecamatan scope keeps its kota in view: the chosen kecamatan is drawn in full, the rest faded, not hidden. */
-      if (outline && focus !== null) {
-        const hit = name === focus;
-        return {
-          color: hit ? '#0B2320' : '#6F8F8B', weight: hit ? 2.6 : 0.9, opacity: hit ? 1 : 0.7,
-          fillColor: a ? metricColor(a, metric, max) : '#E3EAE9', fillOpacity: hit ? (a ? 0.82 : 0.5) : 0.2,
-        };
+      /* Kecamatan are context: a border and no fill, so the branch points are the only colour on the map.
+       * The fill is kept at zero rather than switched off, so hovering anywhere inside still finds the area.
+       * A kecamatan scope is marked by a heavier border, never by fading the others. */
+      if (outline) {
+        const hit = focus !== null && name === focus;
+        return { color: hit ? '#0B2320' : '#135955', weight: hit ? 3 : 1.4, opacity: 1, fill: true, fillOpacity: 0 };
       }
       if (a && small.has(name!)) return { color: '#0B2320', weight: 1, opacity: 1, fillColor: metricColor(a, metric, max), fillOpacity: 1 };
       /* Inside a province the areas without branches are most of the map, so they need a border that can be seen. */
@@ -215,8 +216,8 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
         const a = areas.get(name);
         /* A tooltip, not a popup: at drillable levels the click navigates away and would destroy a popup the moment it opened. */
         l.on('mouseover mousemove', (e) => { const t = l.getTooltip(); if (t) aim(m, t, (e as L.LeafletMouseEvent).containerPoint, 6); });
-        l.bindTooltip(() => areaTip(name, a, outline ? 'Click to open its branches' : 'Click to drill in'), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
-        l.on('mouseover', () => (l as L.Path).setStyle({ weight: outline ? 2.2 : 2.4, color: '#0B2320' }));
+        l.bindTooltip(() => areaTip(name, a, outline ? 'Click to see its branches' : 'Click to drill in'), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
+        l.on('mouseover', () => (l as L.Path).setStyle({ weight: outline ? 3 : 2.4, color: '#0B2320' }));
         l.on('mouseout', () => layer.resetStyle(l as L.Path));
         if (a) l.on('click', () => pick.current(name));
       },
@@ -244,13 +245,12 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
   /* The chosen province or kota is outlined, so it reads as one place; nothing outside it is hidden or dimmed. */
   useEffect(() => {
     const m = map.current;
-    /* At kecamatan level the kecamatan already draw the kota, closer than its own simplified outline would. */
-    if (!m || !area || outline) return;
+    if (!m || !area || !areaEdge) return;
     const g = area.geometry;
     const rings = (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((r) => r[0].map(([x, y]) => [y, x] as [number, number]));
     const edge = L.polygon(rings, { color: '#0B2320', weight: 2.2, opacity: 0.9, fill: false, interactive: false }).addTo(m);
     return () => { edge.remove(); };
-  }, [area, outline]);
+  }, [area, areaEdge]);
 
   // branch points
   useEffect(() => {
@@ -260,15 +260,16 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     /* Largest first, so a small branch is never buried under a big one. */
     const group = L.layerGroup([...shown].sort((a, b) => b.mix.total - a.mix.total).map((p) => {
       const r = Math.max(5, Math.min(17, 4 + Math.sqrt(p.mix.total) * 0.9));
-      const inFocus = focus === null || p.place.kecamatan === focus;
+      /* Every point is drawn solid. A branch under the minimum review count is grey rather than faded,
+       * and the branches of a scoped kecamatan get a heavier ring rather than the others getting fainter. */
+      const inFocus = focus !== null && p.place.kecamatan === focus;
       const mk = L.circleMarker([p.place.lat!, p.place.lng!], {
         radius: r,
-        color: p.enough ? '#0B2320' : '#8FA5A3',
-        weight: inFocus ? (p.enough ? 1.6 : 1.8) : 0.8,
-        opacity: inFocus ? 0.95 : 0.35,
-        fillColor: p.enough ? metricColor(p, 'score', 1) : '#FFFFFF',
-        fillOpacity: inFocus ? (p.enough ? 0.9 : 0.25) : (p.enough ? 0.3 : 0.1),
-        dashArray: p.enough ? undefined : '2 3',
+        color: '#0B2320',
+        weight: inFocus ? 2.6 : 1.4,
+        opacity: 1,
+        fillColor: p.enough ? metricColor(p, 'score', 1) : '#B9C6C4',
+        fillOpacity: 1,
       });
       /* Registered before the tooltip opens: flip the card below the point when there is not
        * enough room above it, instead of letting the map clip it. */
