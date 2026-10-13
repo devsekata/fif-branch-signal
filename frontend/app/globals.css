@@ -602,7 +602,7 @@ tr.clickable,.thread.clickable{cursor:pointer}
 /* branch points in the map legend */
 .pt-key{display:inline-flex;align-items:center;gap:6px}
 .pt-key i{display:inline-block;border-radius:50%;background:#7FB8AE;border:1.5px solid #0B2320;flex:none}
-.pt-key i.thin{background:#fff;border:1.5px dashed #8FA5A3}
+.pt-key i.thin{background:#B9C6C4;border:1.5px solid #0B2320}
 /* listing integrity */
 .lst-search{width:100%;font-family:inherit;font-size:12.5px;padding:9px 12px;border-radius:var(--r-sm);
   border:1px solid var(--rule);background:var(--card);color:var(--ink)}
