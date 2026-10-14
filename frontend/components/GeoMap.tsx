@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import '@maplibre/maplibre-gl-leaflet';
+import { setWorkerUrl, type LayerSpecification, type Map as GlMap } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { metricColor, metricValue, type Area, type BranchPoint, type GeoMetric, type RegionFeature } from '@/lib/geo';
 import { MIN_N, type Mix } from '@/lib/signal';
 
@@ -24,8 +27,6 @@ export interface GeoMapProps {
   focus: string | null;
   /** The province, kota or kecamatan being looked inside. The frame is fitted to it. */
   area?: RegionFeature | null;
-  /** Draw the area's own outline. Off where the areas drawn inside it already trace it more closely. */
-  areaEdge?: boolean;
   onPick: (name: string) => void;
   onBranch: (branchId: string) => void;
 }
@@ -158,14 +159,71 @@ function bulkBounds(features: RegionFeature[], share: number): L.LatLngBounds | 
 const INDONESIA: L.LatLngBoundsExpression = [[-11, 95], [6, 141]];
 /* The zoom is capped per level: national has to hold the whole archipelago, a single province or
  * kota should fill the frame rather than be zoomed into one street. */
+const BASEMAP = 'https://tiles.openfreemap.org/styles/liberty';
+
 const MAX_ZOOM = { national: 6, area: 13, branches: 14 };
+
+/* Copied to public/ by next.config.ts: the bundle has no worker beside the MapLibre chunk to find on its own. */
+setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
+
+/* Veils the basemap outside the area looked inside, lightly: the land, water and large names still read.
+ * Web Mercator stops short of the poles, so does the frame. */
+const WORLD: L.LatLngTuple[] = [[-85, -180], [85, -180], [85, 180], [-85, 180]];
+const VEIL = '#EEF2F1';
+const NONE: RegionFeature[] = [];
+const SVG_NS = 'http://www.w3.org/2000/svg';
+let veils = 0;
+
+/** The outer ring of each polygon of an area, as Leaflet latlngs. */
+const outerRings = (f: RegionFeature) =>
+  (f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates).map((r) => r[0].map(([x, y]) => [y, x] as L.LatLngTuple));
+
+/* Street-level detail: roads (rail aside) and their names, points of interest, buildings, and the place names below a city. */
+const SMALL_PLACES = new Set(['label_other', 'label_village', 'label_town']);
+const DETAIL_SOURCES = new Set(['transportation_name', 'poi', 'aerodrome_label', 'building', 'housenumber']);
+const sourceOf = (l: LayerSpecification) => ('source-layer' in l ? l['source-layer'] : undefined);
+const isRoad = (l: LayerSpecification) => sourceOf(l) === 'transportation_name' || (sourceOf(l) === 'transportation' && !l.id.includes('rail'));
+const isDetail = (l: LayerSpecification) => isRoad(l) || DETAIL_SOURCES.has(sourceOf(l) ?? '') || SMALL_PLACES.has(l.id);
+
+/** A basemap's layers, or none before its style has loaded; its style.load handler applies them then. */
+function layersOf(gl: GlMap | undefined): LayerSpecification[] {
+  try { return gl?.getStyle()?.layers ?? []; } catch { return []; }
+}
+
+/** The basemap under everything. Nationally it is faded with its roads hidden, so heat colours read over it.
+ *  Inside an area it is in full but without street-level detail, which the streets layer draws within the area
+ *  alone, and without its own administrative lines, so the map's borders are the only ones. */
+function fitBasemap(base: L.MaplibreGL, inArea: boolean) {
+  base.getContainer().style.opacity = inArea ? '1' : '0.55';
+  const gl = base.getMaplibreMap();
+  for (const l of layersOf(gl)) {
+    if (sourceOf(l) === 'boundary') gl.setLayoutProperty(l.id, 'visibility', inArea ? 'none' : 'visible');
+    else if (isDetail(l)) gl.setLayoutProperty(l.id, 'visibility', inArea || isRoad(l) ? 'none' : 'visible');
+  }
+}
+
+/** The streets layer: the same basemap reduced to its street-level detail, clipped to the area looked inside.
+ *  Its other names are drawn again too, at the same places, so inside the area they stay above the roads. */
+function onlyDetail(streets: L.MaplibreGL) {
+  const gl = streets.getMaplibreMap();
+  for (const l of layersOf(gl)) gl.setLayoutProperty(l.id, 'visibility', isDetail(l) || l.type === 'symbol' ? 'visible' : 'none');
+}
 
 const located = (p: BranchPoint) => p.place.lat != null && p.place.lng != null;
 
 /** One administrative level as a choropleth, with branches as points. Leaflet needs `window`, so load this with `ssr: false`. */
-export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, area, areaEdge = true, onPick, onBranch }: GeoMapProps) {
+export default function GeoMap({ features, areas, metric, national, outline, points, ranked, focus, area, onPick, onBranch }: GeoMapProps) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
+  const basemap = useRef<L.MaplibreGL | null>(null);
+  const streets = useRef<L.MaplibreGL | null>(null);
+  /* The area looked inside, none at national level: streets are shown only here. */
+  const inside = useMemo(() => (national ? NONE : area ? [area] : features), [national, area, features]);
+  const inArea = inside.length > 0;
+  /* Read when the basemap style finishes loading, which can land after the level has changed. */
+  const inAreaNow = useRef(inArea);
+  /* The <use> that places the area's shape in the streets layer's own coordinates, moved whenever that layer is. */
+  const clipUse = useRef<SVGUseElement | null>(null);
   /* Kept in refs so re-binding a click handler does not redraw the layers. */
   const pick = useRef(onPick);
   const openBranch = useRef(onBranch);
@@ -175,14 +233,88 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     /* zoomSnap 0 lets fitBounds use a fractional zoom. On integer snapping Leaflet rounds down,
      * so a province could sit at half the scale its frame allows. */
     const m = L.map(box.current!, { scrollWheelZoom: false, zoomSnap: 0, zoomDelta: 0.5 });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · boundaries BIG RBI 25K',
-      maxZoom: 17, opacity: 0.55,
-    }).addTo(m);
+    /* The view has to exist before the basemap is added: until then Leaflet defers onAdd and the layer has no container. */
     m.fitBounds(INDONESIA);
+    /* A vector basemap, so its roads can be left out under the heat colours they compete with. */
+    const base = L.maplibreGL({ style: BASEMAP, attributionControl: false }).addTo(m);
+    basemap.current = base;
+    base.getMaplibreMap().on('style.load', () => fitBasemap(base, inAreaNow.current));
+    /* Above the basemap (tilePane, 200) and below the areas (overlayPane, 400): the streets of the area,
+     * then the veil around it and its heavy edge. */
+    for (const [name, z] of [['streets', '250'], ['mask', '300']]) {
+      const pane = m.createPane(name);
+      pane.style.zIndex = z;
+      pane.style.pointerEvents = 'none';
+    }
+    /* The streets are a second basemap clipped to the area, so they end exactly at its edge. */
+    const st = L.maplibreGL({ style: BASEMAP, attributionControl: false, pane: 'streets' } as Parameters<typeof L.maplibreGL>[0]).addTo(m);
+    streets.current = st;
+    st.getContainer().style.display = inAreaNow.current ? '' : 'none';
+    st.getMaplibreMap().on('style.load', () => onlyDetail(st));
+    /* The clip path is in layer points; the streets container sits at its own layer point, moved as the map pans. */
+    st.getMaplibreMap().on('render', () => {
+      const use = clipUse.current;
+      if (!use) return;
+      const at = L.DomUtil.getPosition(st.getContainer());
+      use.setAttribute('x', String(-at.x));
+      use.setAttribute('y', String(-at.y));
+    });
+    m.attributionControl.addAttribution('<a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · boundaries BIG RBI 25K');
     map.current = m;
-    return () => { m.remove(); map.current = null; };
+    return () => { m.remove(); map.current = null; basemap.current = null; streets.current = null; };
   }, []);
+
+  useEffect(() => {
+    inAreaNow.current = inArea;
+    if (basemap.current) fitBasemap(basemap.current, inArea);
+    if (streets.current) streets.current.getContainer().style.display = inArea ? '' : 'none';
+  }, [inArea]);
+
+  /* Outside the area looked inside the basemap is lightly veiled, so the area stands out while the land,
+   * water and large names around it still read. No other border is drawn out there. */
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !inside.length) return;
+    const veil = L.polygon([WORLD, ...inside.flatMap(outerRings)], { pane: 'mask', stroke: false, fillColor: VEIL, fillOpacity: 0.45, interactive: false }).addTo(m);
+    /* The area's edge, heavy, while the borders within it stay thin: every outline inside is traced heavy and
+     * clipped to the veil, so only the outer half along the area's own edge is left. The clip uses the veil's
+     * live path, which Leaflet redraws on every move and zoom. */
+    const edge = L.geoJSON({ type: 'FeatureCollection', features: inside } as GeoJSON.FeatureCollection,
+      { pane: 'mask', style: { color: '#0B2320', weight: 5, opacity: 1, fill: false }, interactive: false }).addTo(m);
+    /* The area's shape alone, drawn invisibly, for the streets layer to be clipped to. */
+    const hole = L.polygon(inside.flatMap(outerRings), { pane: 'mask', stroke: false, fillOpacity: 0, interactive: false }).addTo(m);
+    const n = ++veils;
+    const clipTo = (path: SVGPathElement | undefined, id: string, evenodd: boolean) => {
+      const svg = path?.ownerSVGElement;
+      if (!path || !svg) return null;
+      path.id = id;
+      const clip = document.createElementNS(SVG_NS, 'clipPath');
+      clip.id = `${id}-clip`;
+      const use = document.createElementNS(SVG_NS, 'use');
+      use.setAttribute('href', `#${id}`);
+      if (evenodd) { path.setAttribute('clip-rule', 'evenodd'); use.setAttribute('clip-rule', 'evenodd'); }
+      clip.append(use);
+      svg.prepend(clip);
+      return { clip, use };
+    };
+    const outside = clipTo(veil.getElement() as SVGPathElement | undefined, `veil-${n}`, true);
+    if (outside) edge.eachLayer((l) => (l as L.Path).getElement()?.setAttribute('clip-path', `url(#${outside.clip.id})`));
+    const within = clipTo(hole.getElement() as SVGPathElement | undefined, `area-${n}`, false);
+    const st = streets.current?.getContainer();
+    if (within && st) {
+      clipUse.current = within.use;
+      const at = L.DomUtil.getPosition(st);
+      within.use.setAttribute('x', String(-at.x));
+      within.use.setAttribute('y', String(-at.y));
+      st.style.clipPath = `url(#${within.clip.id})`;
+    }
+    return () => {
+      if (st) st.style.clipPath = '';
+      clipUse.current = null;
+      outside?.clip.remove(); within?.clip.remove();
+      hole.remove(); edge.remove(); veil.remove();
+    };
+  }, [inside]);
 
   // polygons
   useEffect(() => {
@@ -193,20 +325,17 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     const style = (f?: RegionFeature): L.PathOptions => {
       const name = f?.properties.nama;
       const a = name ? areas.get(name) : undefined;
-      /* Kecamatan are context: a border and no fill, so the branch points are the only colour on the map.
-       * The fill is kept at zero rather than switched off, so hovering anywhere inside still finds the area.
-       * A kecamatan scope is marked by a heavier border, never by fading the others. */
-      if (outline) {
-        const hit = focus !== null && name === focus;
-        return { color: hit ? '#0B2320' : '#135955', weight: hit ? 3 : 1.4, opacity: 1, fill: true, fillOpacity: 0 };
-      }
-      if (a && small.has(name!)) return { color: '#0B2320', weight: 1, opacity: 1, fillColor: metricColor(a, metric, max), fillOpacity: 1 };
-      /* Inside a province the areas without branches are most of the map, so they need a border that can be seen. */
+      /* A chosen kecamatan is context: a border and no fill, so the branch points are the only colour on the map.
+       * The fill is kept at zero rather than switched off, so hovering anywhere inside still finds the area. */
+      if (outline) return { color: '#0B2320', weight: 1, opacity: 1, fill: true, fillOpacity: 0 };
+      if (a && national && small.has(name!)) return { color: '#0B2320', weight: 1, opacity: 1, fillColor: metricColor(a, metric, max), fillOpacity: 1 };
+      /* Inside an area every part of it gets a thin solid border; the area's own edge is the heavy one. */
       return {
-        color: national ? '#FFFFFF' : '#6F8F8B', weight: national ? 1.2 : 0.9, opacity: 0.9,
+        color: national ? '#FFFFFF' : '#3E5F5B', weight: national ? 1.2 : 1, opacity: national ? 0.9 : 1,
         fillColor: a ? metricColor(a, metric, max) : '#E3EAE9',
-        fillOpacity: a ? 0.82 : national ? 0.35 : 0.5,
-        dashArray: a ? undefined : '3 4',
+        /* Below national the fill is translucent, so the streets of the basemap read through it. */
+        fillOpacity: national ? (a ? 0.82 : 0.35) : a ? 0.5 : 0.2,
+        dashArray: a || !national ? undefined : '3 4',
       };
     };
     const layer: L.GeoJSON = L.geoJSON({ type: 'FeatureCollection', features } as GeoJSON.FeatureCollection, {
@@ -217,7 +346,7 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
         /* A tooltip, not a popup: at drillable levels the click navigates away and would destroy a popup the moment it opened. */
         l.on('mouseover mousemove', (e) => { const t = l.getTooltip(); if (t) aim(m, t, (e as L.LeafletMouseEvent).containerPoint, 6); });
         l.bindTooltip(() => areaTip(name, a, outline ? 'Click to see its branches' : 'Click to drill in'), { className: 'geo-tip', sticky: true, direction: 'top', opacity: 1 });
-        l.on('mouseover', () => (l as L.Path).setStyle({ weight: outline ? 3 : 2.4, color: '#0B2320' }));
+        if (!outline) l.on('mouseover', () => (l as L.Path).setStyle({ weight: 2.4, color: '#0B2320' }));
         l.on('mouseout', () => layer.resetStyle(l as L.Path));
         if (a) l.on('click', () => pick.current(name));
       },
@@ -240,17 +369,7 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     mark();
     m.on('zoomend', mark);
     return () => { m.off('zoomend', mark); layer.remove(); };
-  }, [features, areas, metric, outline, focus, national]);
-
-  /* The chosen province or kota is outlined, so it reads as one place; nothing outside it is hidden or dimmed. */
-  useEffect(() => {
-    const m = map.current;
-    if (!m || !area || !areaEdge) return;
-    const g = area.geometry;
-    const rings = (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((r) => r[0].map(([x, y]) => [y, x] as [number, number]));
-    const edge = L.polygon(rings, { color: '#0B2320', weight: 2.2, opacity: 0.9, fill: false, interactive: false }).addTo(m);
-    return () => { edge.remove(); };
-  }, [area, areaEdge]);
+  }, [features, areas, metric, outline, national]);
 
   // branch points
   useEffect(() => {
@@ -259,7 +378,7 @@ export default function GeoMap({ features, areas, metric, national, outline, poi
     if (!m || !shown.length) return;
     /* Largest first, so a small branch is never buried under a big one. */
     const group = L.layerGroup([...shown].sort((a, b) => b.mix.total - a.mix.total).map((p) => {
-      const r = Math.max(5, Math.min(17, 4 + Math.sqrt(p.mix.total) * 0.9));
+      const r = Math.max(15, Math.min(25, 13 + Math.sqrt(p.mix.total) * 0.8));
       /* Every point is drawn solid. A branch under the minimum review count is grey rather than faded,
        * and the branches of a scoped kecamatan get a heavier ring rather than the others getting fainter. */
       const inFocus = focus !== null && p.place.kecamatan === focus;

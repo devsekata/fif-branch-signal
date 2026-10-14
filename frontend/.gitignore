@@ -43,3 +43,6 @@ next-env.d.ts
 
 # internal docs
 /docs/
+
+# copied from maplibre-gl by next.config.ts
+/public/maplibre/

@@ -132,7 +132,7 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
 
   /* The area being looked inside: the province at kota level, the kota at kecamatan level. */
   const focusArea = useMemo(() => {
-    /* A chosen kecamatan is the frame; its neighbours stay drawn around it as borders. */
+    /* A chosen kecamatan is the frame. */
     if (outline) return features.find((f) => f.properties.nama === focus) ?? null;
     if (level === 'kota') {
       const all = [...(provinsi.data?.features ?? []), ...(shippedProvinces?.features ?? [])];
@@ -148,13 +148,15 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
     return null;
   }, [outline, features, focus, level, sel.province, sel.kota, provinsi.data, kabkota.data, shippedProvinces, shippedKota]);
 
+  /* Only the area looked inside is drawn, never the borders around it: a chosen kecamatan alone, without its neighbours. */
+  const drawnFeatures = useMemo(() => (outline ? features.filter((f) => f.properties.nama === focus) : features), [outline, features, focus]);
+
   /* A drill changes the level at once, but its outlines and figures arrive later. Until both are in,
    * the map keeps showing what it had, so it never empties and falls back to the whole country. */
   const ready = !!boundaries.data && !boundaries.loading && !loading && (level === 'kecamatan' || !!shipped)
     && (level !== 'kota' || !!shippedProvinces) && (level !== 'kecamatan' || (!kabkota.loading && !!shippedKota));
-  /* Only the province is outlined: a kota's or a kecamatan's own outline in the master is far coarser than the kecamatan drawn inside it. */
-  const next = useMemo(() => ({ features, areas: byName, national: level === 'province', outline, points: markers, focus, area: focusArea, areaEdge: level === 'kota' }),
-    [features, byName, level, outline, markers, focus, focusArea]);
+  const next = useMemo(() => ({ features: drawnFeatures, areas: byName, national: level === 'province', outline, points: markers, focus, area: focusArea }),
+    [drawnFeatures, byName, level, outline, markers, focus, focusArea]);
   const [drawnMap, setDrawnMap] = useState(next);
   if (ready && drawnMap !== next) setDrawnMap(next);
   const openBranch = useCallback((id: string) => router.push(branchHref(id)), [router]);
@@ -205,7 +207,7 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
           : (
             <div className="geo-stage">
               <GeoMap features={drawnMap.features} areas={drawnMap.areas} metric={metric} national={drawnMap.national} outline={drawnMap.outline}
-                points={drawnMap.points} ranked={ranked} focus={drawnMap.focus} area={drawnMap.area} areaEdge={drawnMap.areaEdge} onPick={drill} onBranch={openBranch} />
+                points={drawnMap.points} ranked={ranked} focus={drawnMap.focus} area={drawnMap.area} onPick={drill} onBranch={openBranch} />
               {!ready && (
                 <div className="geo-loading" role="status">
                   <span className="geo-spin" aria-hidden="true" />
