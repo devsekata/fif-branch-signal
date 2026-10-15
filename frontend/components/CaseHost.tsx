@@ -9,7 +9,7 @@ import { useSession } from '@/lib/session';
 import type { CaseItem } from '@/lib/types';
 
 /** The case drawer for any list of cases: call `open(case_id)` from a row and render `drawer` once. */
-export function useCaseDrawer(pool: CaseItem[]): { open: (id: string) => void; has: (id: string) => boolean; drawer: ReactNode } {
+export function useCaseDrawer(pool: CaseItem[], onMoved?: () => void): { open: (id: string) => void; has: (id: string) => boolean; drawer: ReactNode } {
   const [openId, setOpenId] = useState<string | null>(null);
   const session = useSession();
   const { topic } = useReference();
@@ -28,6 +28,7 @@ export function useCaseDrawer(pool: CaseItem[]): { open: (id: string) => void; h
         role={role}
         email={session?.email ?? ''}
         onClose={close}
+        onMoved={onMoved}
       />
     ) : null,
   };

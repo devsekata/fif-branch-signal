@@ -1,6 +1,7 @@
 'use client';
 
 import { PanelHead } from '@/components/ui';
+import { Masonry } from '@/components/Masonry';
 import { useApi } from '@/lib/api';
 import { useReference } from '@/lib/reference';
 import { plural, fmt } from '@/lib/theme';
@@ -78,7 +79,7 @@ export function MethodView() {
 
   return (
     <section className="page">
-      <div className="grid g-58 mb">
+      <Masonry>
         <div className="panel">
           <PanelHead title="How to read this prototype" />
           <div className="callout">
@@ -158,8 +159,9 @@ export function MethodView() {
               </table>
             </>
           )}
-
-          <div className="p-head" style={{ marginTop: 22 }}><h3>Severity ladder</h3></div>
+        </div>
+        <div className="panel">
+          <PanelHead title="Severity ladder" />
           <table>
             <thead><tr><th className="n">Level</th><th>Covers</th><th className="n">Topics</th><th className="n">Keywords</th><th className="n">Found</th></tr></thead>
             <tbody>
@@ -177,11 +179,9 @@ export function MethodView() {
               })}
             </tbody>
           </table>
-
-          <div className="p-head" style={{ marginTop: 22 }}><h3>Classifier accuracy</h3></div>
-          <Accuracy a={config?.classifier_accuracy} />
-
-          <div className="p-head" style={{ marginTop: 22 }}><h3>Instagram-specific limits</h3></div>
+        </div>
+        <div className="panel">
+          <PanelHead title="Instagram-specific limits" />
           <table>
             <thead><tr><th>Instagram limit</th><th>Effect</th></tr></thead>
             <tbody>
@@ -191,26 +191,30 @@ export function MethodView() {
             </tbody>
           </table>
         </div>
-      </div>
-      <div className="panel">
-        <PanelHead title="What production needs that this prototype does not have" />
-        <ul className="clean">
-          {ROADMAP.map(([t, d], i) => (
-            <li key={t}>
-              <span className="idx">{String(i + 1).padStart(2, '0')}</span>
-              <span><b>{t}</b><div>{d}</div></span>
-            </li>
-          ))}
-        </ul>
-        {meta && (
-          <div className="p-note" style={{ marginTop: 18, marginBottom: 0 }}>
-            Taxonomy {meta.versions.taxonomy} · scoring {meta.versions.scoring} · classifier {meta.versions.classifier}.{' '}
-            Data as of {meta.as_of.slice(0, 16).replace('T', ' ')} UTC, generated {meta.generated_at.slice(0, 16).replace('T', ' ')} UTC
-            {meta.date_bounds ? `, covering ${meta.date_bounds.min} to ${meta.date_bounds.max}` : ''}.{' '}
-            {meta.sources.map((s) => `${s.label}: ${fmt(s.rows)} rows, ${s.status}`).join(' · ')}.
-          </div>
-        )}
-      </div>
+        <div className="panel">
+          <PanelHead title="Classifier accuracy" />
+          <Accuracy a={config?.classifier_accuracy} />
+        </div>
+        <div className="panel">
+          <PanelHead title="What production needs that this prototype does not have" />
+          <ul className="clean">
+            {ROADMAP.map(([t, d], i) => (
+              <li key={t}>
+                <span className="idx">{String(i + 1).padStart(2, '0')}</span>
+                <span><b>{t}</b><div>{d}</div></span>
+              </li>
+            ))}
+          </ul>
+          {meta && (
+            <div className="p-note" style={{ marginTop: 18, marginBottom: 0 }}>
+              Taxonomy {meta.versions.taxonomy} · scoring {meta.versions.scoring} · classifier {meta.versions.classifier}.{' '}
+              Data as of {meta.as_of.slice(0, 16).replace('T', ' ')} UTC, generated {meta.generated_at.slice(0, 16).replace('T', ' ')} UTC
+              {meta.date_bounds ? `, covering ${meta.date_bounds.min} to ${meta.date_bounds.max}` : ''}.{' '}
+              {meta.sources.map((s) => `${s.label}: ${fmt(s.rows)} rows, ${s.status}`).join(' · ')}.
+            </div>
+          )}
+        </div>
+      </Masonry>
     </section>
   );
 }

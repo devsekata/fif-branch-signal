@@ -117,16 +117,17 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
   const areas = useMemo(() => toAreas(data, level), [data, level]);
   const byName = useMemo(() => new Map(areas.map((a) => [a.name, a])), [areas]);
 
-  /* Areas are coloured until one kecamatan is chosen: provinces, then the kab/kota of a province, then
-   * the kecamatan of a kota. Only inside a chosen kecamatan do the branches appear, as points, with
-   * the kecamatan reduced to borders so the points carry the colour. */
+  /* Areas are coloured at every level: provinces, then the kab/kota of a province, then the kecamatan
+   * of a kota. From kecamatan level the branches show too, as points over their kecamatan, so a branch
+   * whose kecamatan has no outline is still on the map. Inside a chosen kecamatan the kecamatan is
+   * reduced to borders, so the points carry the colour. */
   const outline = level === 'kecamatan' && !!focus;
   const drawn = useMemo(() => new Set(features.map((f) => f.properties.nama)), [features]);
   const markers = useMemo(() => {
     const located = points.filter((p) => p.place.lat != null && p.place.lng != null);
-    if (!boundaries.data) return [];
-    return outline ? located.filter((p) => p.place.kecamatan === focus) : [];
-  }, [points, outline, focus, boundaries.data]);
+    if (!boundaries.data || level !== 'kecamatan') return [];
+    return located.filter((p) => (outline ? p.place.kecamatan === focus : p.place.kota === sel.kota));
+  }, [points, level, outline, focus, sel.kota, boundaries.data]);
   const noBoundary = useMemo(() => (boundaries.data ? [...new Set(placed.map((p) => p.place[level]).filter((n): n is string => !!n && !drawn.has(n)))] : []), [placed, level, drawn, boundaries.data]);
   const ranked = useMemo(() => points.filter((p) => p.enough).length, [points]);
 
@@ -196,7 +197,9 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
           {focus && <><b style={{ color: 'var(--ink)' }}>Scoped to {view.scopeName}.</b> The map stays at kecamatan level so you can see it in context; the scoped kecamatan and its branches carry a heavier outline. </>}
           {outline
             ? 'Kecamatan are drawn as borders only; the colour is on the branches. Each point is a branch: colour is its sentiment score, size is review volume, grey is under the minimum review count. Click a point to open the branch, or another kecamatan to move to it.'
-            : `Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise. Click an area that holds branches to drill in; the branches appear once a kecamatan is chosen.`}
+            : level === 'kecamatan'
+            ? 'Colour runs on the selected metric; each point is a branch, coloured by its sentiment score and sized by review volume. Areas and branches under the minimum review count stay grey. Click a kecamatan to focus on it, or a point to open the branch.'
+            : 'Colour runs on the selected metric. Areas under the minimum review count stay grey — a score built on a handful of reviews is noise. Click an area that holds branches to drill in; the branches appear as points at kecamatan level.'}
           {noBoundary.length > 0 && ` No boundary geometry for ${noBoundary.length > 4 ? `${noBoundary.length} ${LEVEL_PLURAL[level].toLowerCase()}` : noBoundary.join(', ')}, so ${level === 'kecamatan'
             ? `only ${plural(noBoundary.length, 'its', 'their')} branch points show`
             : `${plural(noBoundary.length, 'it is', 'they are')} missing from the map and listed in the table below`}.`}

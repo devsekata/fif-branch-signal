@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { useCaseDrawer } from '@/components/CaseHost';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
+import { Masonry } from '@/components/Masonry';
 import { AiNote, ApiPage, Bridge, Chip, Chips, EmptyRow, Metric, NoText, PanelHead, Pending, Rating, SourceBadge, Stat, Tags } from '@/components/ui';
 import { useApi, type ApiResult } from '@/lib/api';
 import { useFilters, type Level } from '@/lib/filters';
@@ -13,7 +14,7 @@ import { useReference } from '@/lib/reference';
 import { praiseInScope, topicRows, type PraiseDrivers } from '@/lib/topics';
 import { LEVEL_LABEL, pickScope, useView, type View } from '@/lib/scope';
 import { MIN_N, readOf, share, type Mix } from '@/lib/signal';
-import { IG, IRRELEVANT, NEUTRAL, PRI, T, clip, monthLabel, plural, riskColor, sevColor, fmt } from '@/lib/theme';
+import { IG, IRRELEVANT, NEUTRAL, PRI, T, clip, monthLabel, plural, riskColor, sevColor, fmt, shortBranch } from '@/lib/theme';
 import type { CasesResponse, ComplaintsResponse, SignalBranchesResponse, SignalOverviewResponse } from '@/lib/types';
 
 type Sig = SignalOverviewResponse;
@@ -29,33 +30,25 @@ export function OverviewView() {
     <ApiPage res={sig}>
       {(d) => (
         <>
-          <div className="grid g-58 mb">
+          {/* Each card goes to whichever column is shorter, so the two bottoms stay level whatever the scope leaves in them. */}
+          <Masonry className="mb">
             <Hero view={view} m={d.mix} why={d.irrelevant_reasons} />
-            <Decision view={view} d={d} />
-          </div>
-
-          <div className="grid g-2 mb">
-            <Themes view={view} res={complaintsRes} />
-            <BestWorst view={view} res={branches} />
-          </div>
-
-          <div className="grid g-58 mb">
             <Trend view={view} months={d.monthly} />
+            <Decision view={view} d={d} />
+            <BestWorst view={view} res={branches} />
+            <Themes view={view} res={complaintsRes} />
             <div className="panel">
               <PanelHead title="Branch risk ranking" />
               <div className="p-note">Complaint rate, open critical cases, conduct-risk mentions and ageing, combined into one score.</div>
               <RiskChart view={view} res={branches} />
             </div>
-          </div>
-
-          <div className="grid g-85 mb">
             <Channels view={view} d={d} praise={complaints?.praise_drivers} />
             <div className="panel">
               <PanelHead title="Work the top of this list first" tag="both channels, highest criticality" />
               <div className="p-note">Full queue with topic tags and links lives in Escalations.</div>
               <TopCases view={view} />
             </div>
-          </div>
+          </Masonry>
           <Bridge from="overview" />
         </>
       )}
@@ -88,8 +81,8 @@ function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n:
   const cov = coverage?.universe ? ((100 * coverage.rows) / coverage.universe).toFixed(1) : null;
   const verdict = m.score === null ? '' : m.score >= 70 ? 'Mostly positive' : m.score >= 55 ? 'Mixed, leaning positive' : m.score >= 45 ? 'Mixed' : 'Leaning negative';
   return (
-    <div className="hero">
-      <div className="dw-sub" style={{ marginBottom: 6 }}><span>How customers are talking about FIF right now</span></div>
+    <div className="hero glow">
+      <div className="hero-eyebrow"><i className="live" />How customers are talking about FIF right now</div>
       <div className="lede">
         {all ? (
           <>
@@ -99,13 +92,13 @@ function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n:
           </>
         ) : 'Nothing read in this view.'}
       </div>
-      <div className="stat-rail" style={{ borderTop: 'none', paddingTop: 0 }}>
+      <div className="stat-rail tiles">
         <Stat k="Sentiment score" v={m.score ?? '—'} n="(positive − negative) ÷ total, irrelevant/spam left out" bad={m.score !== null && m.score < 55} />
         <Stat k="Inbound Message" v={all.toLocaleString('id-ID')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
         <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={reasons || `${m.irrelevant.toLocaleString('id-ID')} set aside by the relevance check`} />
         <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('id-ID')} reviews and comments`} bad={share(m.bad, all) > 15} />
       </div>
-      <div style={{ borderTop: '1px solid var(--rule-2)', marginTop: 18, paddingTop: 14 }}>
+      <div className="hero-donut">
         <MixDonut m={m} />
       </div>
     </div>
@@ -415,22 +408,31 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
   );
 }
 
+/** The riskiest branches drawn; the rest are counted under the chart. */
+const RISK_TOP = 15;
+
 function RiskChart({ view, res }: { view: View; res: ApiResult<SignalBranchesResponse> }) {
   /* Branches with nothing read in this view are dropped rather than shown at zero. */
-  const rows = useMemo(() => (res.data?.branches ?? []).filter((b) => b.reviews_read > 0)
+  const ranked = useMemo(() => (res.data?.branches ?? []).filter((b) => b.reviews_read > 0)
     .map((b) => ({ name: b.branch, risk: b.risk_score, cr: b.complaint_rate_pct, reg: b.conduct_flags }))
     .sort((a, b) => b.risk - a.risk), [res.data]);
+  const rows = useMemo(() => ranked.slice(0, RISK_TOP), [ranked]);
   const config = useMemo((): ChartConfig<'bar'> => ({
     type: 'bar',
     data: {
-      labels: rows.map((r) => r.name),
+      labels: rows.map((r) => shortBranch(r.name)),
       datasets: [{ data: rows.map((r) => r.risk), borderRadius: 5, backgroundColor: rows.map((r) => riskColor(r.risk)) }],
     },
     options: {
       responsive: true, maintainAspectRatio: false, indexAxis: 'y',
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: (c) => `risk ${c.parsed.x} · ${rows[c.dataIndex].cr}% complaints · ${rows[c.dataIndex].reg} conduct flags` } },
+        tooltip: {
+          callbacks: {
+            title: (c) => rows[c[0].dataIndex].name,
+            label: (c) => `risk ${c.parsed.x} · ${rows[c.dataIndex].cr}% complaints · ${rows[c.dataIndex].reg} conduct flags`,
+          },
+        },
       },
       scales: { x: { ...AXIS, beginAtZero: true, max: 100 }, y: NOGRID },
     },
@@ -440,7 +442,16 @@ function RiskChart({ view, res }: { view: View; res: ApiResult<SignalBranchesRes
   if (res.error) return <div className="empty-note">Branch figures could not be loaded. {res.error}</div>;
   if (!res.data) return <div className="empty-note">Loading branch figures…</div>;
   if (!rows.length) return <div className="empty-note">No branch in this scope.</div>;
-  return <ChartBox config={config} />;
+  return (
+    <>
+      <ChartBox config={config} />
+      {ranked.length > RISK_TOP && (
+        <div className="p-note" style={{ margin: '8px 0 0' }}>
+          The {RISK_TOP} riskiest of {fmt(ranked.length)} branches. The full list is in Area &amp; Branch.
+        </div>
+      )}
+    </>
+  );
 }
 
 /* ---------- where feedback arrives ---------- */

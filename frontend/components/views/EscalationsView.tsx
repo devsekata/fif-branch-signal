@@ -6,14 +6,14 @@ import { AiNote, ApiPage, Chip, Chips, EmptyRow, NoText, Rating, SortHead, Sourc
 import { STATE, asState } from '@/lib/caseflow';
 import { useCaseList, type CaseList } from '@/lib/cases';
 import { slaLabel, toRow, type CaseRow } from '@/lib/caseRow';
-import { useCase } from '@/lib/caseStore';
+import { readCase, useCase, useStatusVersion } from '@/lib/caseStore';
 import { useReference } from '@/lib/reference';
 import { nextSort, sortRows, useView, type SortState } from '@/lib/scope';
 import { T, plural, fmt } from '@/lib/theme';
 
 type QueueKey = keyof CaseRow & string;
 type QueueFilter = 'all' | 'critical' | 'high' | 'medium';
-type Bucket = 'any' | 'untouched' | 'working' | 'awaiting' | 'closed';
+type Bucket = 'any' | 'opencases' | 'untouched' | 'working' | 'awaiting' | 'closed';
 
 const COLS: Col<QueueKey>[] = [
   ['priority', 'Priority', false], ['score', 'Score', true], ['severity', 'Sev', true], ['status', 'Status', false], ['source', 'Source', false],
@@ -22,10 +22,12 @@ const COLS: Col<QueueKey>[] = [
 ];
 
 const CHIPS: [QueueFilter, string][] = [['all', 'Everything'], ['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium']];
-const BUCKETS: [Bucket, string][] = [['any', 'Any status'], ['untouched', 'Not started'], ['working', 'In progress'], ['awaiting', 'Awaiting approval'], ['closed', 'Closed']];
+const BUCKETS: [Bucket, string][] = [
+  ['any', 'Any status'], ['opencases', 'Open cases'], ['untouched', 'Never answered'], ['working', 'In progress'], ['awaiting', 'Awaiting approval'], ['closed', 'Closed'],
+];
 
-/** Where a case stands, in the four words a queue is read by. */
-const bucketOf = (status: string): Exclude<Bucket, 'any'> => {
+/** Where a case stands, in the four words a queue is read by. "Open cases" is every bucket but closed. */
+const bucketOf = (status: string): Exclude<Bucket, 'any' | 'opencases'> => {
   const s = asState(status);
   return s === 'open' ? 'untouched' : s === 'pending' ? 'awaiting' : s === 'closed' || s === 'verified' ? 'closed' : 'working';
 };
@@ -34,25 +36,41 @@ export function EscalationsView() {
   const view = useView('escalations');
   /* Complaints only, highest criticality first, across as many pages as the scope holds. */
   const res = useCaseList({ ...view.sig, complaints: 'true', sort: 'criticality', order: 'desc' });
-  return <ApiPage res={res}>{(d) => <Queue list={d} />}</ApiPage>;
+  /* A move the server accepted re-reads the queue, so the case lands in the bucket it now belongs to. */
+  return <ApiPage res={res}>{(d) => <Queue list={d} onMoved={res.retry} />}</ApiPage>;
 }
 
-function Queue({ list }: { list: CaseList }) {
+/** The case's status: what was done in this session if it has been touched, otherwise what the API last reported. */
+const statusNow = (id: string, status: string) => {
+  const s = readCase(id);
+  return s.trail.length ? s.status : status;
+};
+
+const inBucket = (b: Bucket, status: string) => b === 'any' || (b === 'opencases' ? bucketOf(status) !== 'closed' : bucketOf(status) === b);
+
+function Queue({ list, onMoved }: { list: CaseList; onMoved: () => void }) {
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [bucket, setBucket] = useState<Bucket>('any');
   const [sort, setSort] = useState<SortState<QueueKey>>(['score', 'desc']);
   const { topic } = useReference();
   const pool = list.items;
-  const all = useMemo(() => pool.map(toRow), [pool]);
-  const { open, drawer } = useCaseDrawer(pool);
+  /* Re-sorts the buckets the moment a case changes status here, before the re-read lands. */
+  const version = useStatusVersion();
+  const all = useMemo(() => pool.map(toRow).map((c) => ({ ...c, status: statusNow(c.id, c.status) })),
+    // `version` stands for the case store, which statusNow reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pool, version]);
+  const { open, drawer } = useCaseDrawer(pool, onMoved);
 
   const counts: Record<QueueFilter, number> = { all: all.length, critical: 0, high: 0, medium: 0 };
-  const buckets: Record<Bucket, number> = { any: all.length, untouched: 0, working: 0, awaiting: 0, closed: 0 };
+  const buckets: Record<Bucket, number> = { any: all.length, opencases: 0, untouched: 0, working: 0, awaiting: 0, closed: 0 };
   for (const c of all) {
     if (c.priority === 'critical' || c.priority === 'high' || c.priority === 'medium') counts[c.priority]++;
-    buckets[bucketOf(c.status)]++;
+    const b = bucketOf(c.status);
+    buckets[b]++;
+    if (b !== 'closed') buckets.opencases++;
   }
-  const q = sortRows(all.filter((c) => (filter === 'all' || c.priority === filter) && (bucket === 'any' || bucketOf(c.status) === bucket)), sort);
+  const q = sortRows(all.filter((c) => (filter === 'all' || c.priority === filter) && inBucket(bucket, c.status)), sort);
 
   // what needs attention today
   const stale = all.filter((c) => c.age > 180 && !c.answered).length;
@@ -93,7 +111,7 @@ function Queue({ list }: { list: CaseList }) {
                 <td><Chip priority={c.priority} /></td>
                 <td className="n" title={c.breakdown || undefined}>
                   <b>{c.score}</b>
-                  {c.breakdown && <div className="sub" style={{ whiteSpace: 'nowrap' }}>{c.breakdown}</div>}
+                  {c.breakdown && <div className="sub q-break">{c.breakdown}</div>}
                 </td>
                 <td className="n"><span className={`tag s${c.severity}`}>{c.severity}</span></td>
                 <td><StatusPill id={c.id} status={c.status} /></td>
@@ -101,13 +119,13 @@ function Queue({ list }: { list: CaseList }) {
                   <SourceBadge source={c.source} />
                   <div className="sub">{c.where}{c.stars ? <><br /><Rating stars={c.stars} /></> : null}</div>
                 </td>
-                <td className="mono">{c.date.slice(0, 10)}</td>
+                <td className="mono" style={{ whiteSpace: 'nowrap' }}>{c.date.slice(0, 10)}</td>
                 <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>
                   {c.age}d
                   {c.sla && <div className="sub" style={{ whiteSpace: 'nowrap', color: c.sla.breached ? T.sig : undefined, fontWeight: c.sla.breached ? 600 : undefined }}>SLA {slaLabel(c.sla)}</div>}
                 </td>
                 <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
-                <td>
+                <td className="q-case">
                   <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>
                     {c.text ? c.text.slice(0, 420) : <NoText />}
                     {c.url && (

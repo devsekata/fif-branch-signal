@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Rating, SourceBadge, Tags } from '@/components/ui';
 import {
   EDITABLE, FAILED, SCORE_LABEL, SENT, STATE, TEMPLATES, TRACKS,
@@ -10,6 +11,7 @@ import {
 import { explain, fromServer, postReply, readCaseFromApi } from '@/lib/caseApi';
 import { slaLabel } from '@/lib/caseRow';
 import { readCase, useCase, writeCase } from '@/lib/caseStore';
+import { askModal, toast } from '@/lib/toast';
 import type { Channel, Priority } from '@/lib/types';
 
 /** Moves the Send button in the composer stands for, whichever track the case is on. */
@@ -38,11 +40,13 @@ export interface DrawerCase {
   sla?: { deadline: string; breached: boolean; remainingH: number | null } | null;
 }
 
-export function CaseDrawer({ c, role, email, onClose }: {
+export function CaseDrawer({ c, role, email, onClose, onMoved }: {
   c: DrawerCase | null;
   role: RoleId;
   email: string;
   onClose: () => void;
+  /** Called once the server has accepted a move, so the list behind can re-read the case. */
+  onMoved?: () => void;
 }) {
   const [simFail, setSimFail] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -101,9 +105,11 @@ export function CaseDrawer({ c, role, email, onClose }: {
     if (!c || m.block || stored.sendState === 'sending') return;
     let note: string | undefined;
     if (m.id === 'reject') {
-      const answer = window.prompt('Why is it going back? The author sees this note.', 'Wording implies an admission of fault.');
-      if (answer === null) return;
-      note = answer;
+      const answer = await askModal('Why is it going back? The author sees this note.', {
+        initial: 'Wording implies an admission of fault.', confirm: 'Send back',
+      });
+      if (answer === null || !answer.trim()) return;
+      note = answer.trim();
     }
     const ok = await post(m, note);
     /* A send passes through `sending`; the platform's answer is the second step. Simulated here,
@@ -121,10 +127,14 @@ export function CaseDrawer({ c, role, email, onClose }: {
     writeCase(c.id, { ...before, sendState: 'sending', pendingMove: m.id, apiError: null });
     try {
       const res = await postReply(c.id, replyBody(before, m, role, c.severity, email));
-      writeCase(c.id, fromServer(applyMove(before, m, role, note, email), res));
+      const next = fromServer(applyMove(before, m, role, note, email), res);
+      writeCase(c.id, next);
+      if (next.status !== before.status) toast(`Case moved to ${STATE[next.status]?.label ?? next.status}.`, 'ok');
+      onMoved?.();
       return true;
     } catch (e) {
       writeCase(c.id, { ...before, sendState: 'failed', pendingMove: m.id, apiError: explain(e) });
+      toast(`Nothing was changed. ${explain(e)}`, 'bad', 6000);
       return false;
     }
   }
@@ -147,7 +157,9 @@ export function CaseDrawer({ c, role, email, onClose }: {
   const comp = Object.entries(c.components).filter(([, v]) => typeof v === 'number' && v > 0).sort((a, b) => b[1] - a[1]);
   const compMax = comp.length ? Math.max(...comp.map(([, v]) => v)) : 1;
 
-  return (
+  /* Rendered on the body: the page section animates a transform, and a fixed panel inside it is
+   * placed against that section instead of the viewport — off-screen when opened from far down. */
+  return createPortal(
     <>
       <div className={shown ? 'scrim on' : 'scrim'} onClick={onClose} />
       <aside className={shown ? 'drawer on' : 'drawer'} role="dialog" aria-modal="true" aria-labelledby="dw-title">
@@ -354,6 +366,7 @@ export function CaseDrawer({ c, role, email, onClose }: {
           </div>
         </div>
       </aside>
-    </>
+    </>,
+    document.body,
   );
 }

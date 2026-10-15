@@ -3,13 +3,14 @@
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
+import { Masonry } from '@/components/Masonry';
 import { AiNote, ApiPage, Bridge, Chips, PanelHead, Pending } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { toPoints } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useView, type View } from '@/lib/scope';
 import { praiseInScope, topicRows, type TopicRow } from '@/lib/topics';
-import { IG, T, sevColor, fmt } from '@/lib/theme';
+import { T, fmt } from '@/lib/theme';
 import type { ComplaintsResponse, SignalBranchesResponse, SignalOverviewResponse } from '@/lib/types';
 
 type Praise = ReturnType<typeof praiseInScope>;
@@ -27,19 +28,17 @@ function Complaints({ view, payload }: { view: View; payload: ComplaintsResponse
   return (
     <>
       <ClassificationCard view={view} topics={topics} praise={praise} />
-      <div className="grid g-58 mb">
+      <Masonry className="mb">
         <TopicsPanel view={view} topics={topics} praise={praise} />
         <HeatPanel view={view} topics={topics} praise={praise} />
-      </div>
-      {both && <Exclusive rows={topics} />}
-      <div className="grid g-2 mb">
         <Language view={view} praise={praise} terms={payload?.terms_negative} positiveTerms={payload?.terms_positive} />
         <div className="panel">
           <PanelHead title="Top praised branches" tag="by positive share" />
           <div className="p-note">Scored branches only. The benchmark list for whoever runs branch coaching.</div>
           <Praised view={view} />
         </div>
-      </div>
+      </Masonry>
+      {both && <Exclusive rows={topics} />}
       <Bridge from="complaints" />
     </>
   );
@@ -106,6 +105,7 @@ function ClassificationCard({ view, topics, praise }: { view: View; topics: Topi
 
 /* ---------- what customers complain about ---------- */
 type ClsMode = 'bad' | 'good' | 'all';
+const NEG_LIGHT = '#E8928D';
 const CLS_MODES: [ClsMode, string][] = [['bad', 'Negative'], ['good', 'Positive'], ['all', 'Both sides']];
 
 function TopicsPanel({ view, topics, praise }: { view: View; topics: TopicRow[]; praise: Praise }) {
@@ -115,8 +115,9 @@ function TopicsPanel({ view, topics, praise }: { view: View; topics: TopicRow[];
     const y = { ...NOGRID, ticks: { padding: 6, font: { size: 11.5 } } };
     if (mode === 'bad') {
       const ds = [];
-      if (view.useG) ds.push({ label: 'Google reviews', data: topics.map((r) => r.g), backgroundColor: topics.map((r) => sevColor(r.sev)), borderRadius: 4 });
-      if (view.useS) ds.push({ label: 'Instagram', data: topics.map((r) => r.s), backgroundColor: IG, borderRadius: 4 });
+      /* Every negative bar is red; severity is in the tooltip. Instagram takes a lighter red so the two channels still tell apart. */
+      if (view.useG) ds.push({ label: 'Google reviews', data: topics.map((r) => r.g), backgroundColor: T.sig, borderRadius: 4 });
+      if (view.useS) ds.push({ label: 'Instagram', data: topics.map((r) => r.s), backgroundColor: NEG_LIGHT, borderRadius: 4 });
       return {
         type: 'bar',
         data: { labels: topics.map((r) => r.label), datasets: ds },
@@ -142,7 +143,7 @@ function TopicsPanel({ view, topics, praise }: { view: View; topics: TopicRow[];
       type: 'bar',
       data: {
         labels: rows.map((r) => r.label),
-        datasets: [{ label: mode === 'good' ? 'Positive mentions' : 'Mentions', data: rows.map((r) => r.n), borderRadius: 4, backgroundColor: rows.map((r) => (r.sev ? sevColor(r.sev) : T.grow)) }],
+        datasets: [{ label: mode === 'good' ? 'Positive mentions' : 'Mentions', data: rows.map((r) => r.n), borderRadius: 4, backgroundColor: rows.map((r) => (r.sev ? T.sig : T.grow)) }],
       },
       options: {
         responsive: true, maintainAspectRatio: false, indexAxis: 'y',

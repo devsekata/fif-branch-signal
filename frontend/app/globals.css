@@ -53,6 +53,8 @@ nav{padding:4px 12px;flex:1;overflow:auto}
   box-shadow:0 0 0 3px rgba(83,219,213,.30)}
 
 main{padding:0 30px 56px;max-width:1420px;width:100%}
+/* The escalation queue is a wide table: it takes the full width of the window rather than stopping at the reading width. */
+main:has(.q-table){max-width:none}
 .topbar{position:sticky;top:0;z-index:20;background:rgba(232,238,238,.88);backdrop-filter:blur(10px);
   padding:22px 0 16px;display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap;
   border-bottom:1px solid var(--rule);margin-bottom:22px}
@@ -135,6 +137,31 @@ select.ctl:focus-visible{outline:2px solid var(--deep);outline-offset:1px}
   display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .cand .cc{margin-top:8px;gap:6px}
 .cand .btn2{padding:6px 11px;font-size:11.5px;text-decoration:none;display:inline-block}
+
+/* ---------- toasts ---------- */
+/* The stack itself lets clicks and wheel events through; only the cards catch them. */
+.toasts{position:fixed;right:20px;bottom:20px;z-index:200;display:flex;flex-direction:column;gap:8px;
+  align-items:flex-end;pointer-events:none;max-width:min(380px,calc(100vw - 32px))}
+.toast{pointer-events:auto;display:flex;gap:10px;align-items:flex-start;width:100%;background:var(--ink);color:#fff;
+  border-radius:var(--r);padding:11px 12px 11px 14px;font-size:12.5px;line-height:1.45;
+  box-shadow:0 10px 30px -12px rgba(11,35,32,.55);animation:toast-in .22s ease both}
+.toast .toast-text{flex:1;min-width:0}
+.toast-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);margin-top:6px;flex:none}
+.toast.ok .toast-dot{background:#7BE0A6} .toast.bad .toast-dot{background:#FF8A80}
+.toast-x{background:none;border:none;color:rgba(255,255,255,.6);font-size:16px;line-height:1;cursor:pointer;padding:0 2px;font-family:inherit}
+.toast-x:hover{color:#fff}
+/* A question that needs an answer before the work goes on: a modal over the drawer, not a toast. */
+.modal-scrim{position:fixed;inset:0;z-index:210;background:rgba(11,35,32,.42);backdrop-filter:blur(2px);
+  display:grid;place-items:center;padding:16px;animation:fade-in .16s ease both}
+.modal{width:min(440px,100%);background:var(--card);border:1px solid var(--rule);border-radius:var(--r-lg);
+  padding:20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 60px -24px rgba(11,35,32,.6);animation:toast-in .2s ease both}
+.modal-title{font-family:var(--font-sora),system-ui,sans-serif;font-size:14.5px;font-weight:600;letter-spacing:-.2px}
+.modal textarea{width:100%;font-family:inherit;font-size:13px;border:1px solid var(--rule);border-radius:var(--r-sm);
+  padding:9px 11px;resize:vertical;background:#fff;color:var(--ink);line-height:1.5}
+.modal textarea:focus-visible{outline:2px solid var(--deep);outline-offset:1px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* ---------- case drawer (escalations) ---------- */
 .scrim{position:fixed;inset:0;background:rgba(11,35,32,.34);backdrop-filter:blur(2px);
@@ -262,6 +289,25 @@ select.tpl{width:100%;font-family:inherit;font-size:12.5px;padding:8px 10px;bord
 .stat .v.sig{color:var(--sig)}
 .stat .n{font-size:11.5px;color:var(--ink-2);margin-top:1px}
 
+/* Masonry: two equal columns of 4px rows; components/Masonry.tsx places each card in the shorter column. */
+.masonry{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-auto-rows:4px;column-gap:16px;align-items:start}
+.masonry>*{min-width:0;margin-bottom:0}
+/* A list that would run far past the column beside it scrolls inside its card instead. */
+.list-cap{max-height:1150px;overflow:auto;margin-right:-8px;padding-right:8px}
+/* A pair left side by side is as tall as its own content too. */
+.g-2,.g-58,.g-85{align-items:start}
+.hero.glow{position:relative;overflow:hidden;border-color:#CFE7E4;
+  background:radial-gradient(120% 80% at 100% 0%,rgba(83,219,213,.30) 0%,rgba(83,219,213,0) 60%),
+    radial-gradient(90% 70% at 0% 100%,rgba(216,128,31,.13) 0%,rgba(216,128,31,0) 65%),
+    linear-gradient(180deg,#F4FBFA 0%,#F9FAFB 100%)}
+.hero-eyebrow{display:inline-flex;align-items:center;font-size:11.5px;font-weight:600;color:var(--deep);
+  background:rgba(255,255,255,.7);border:1px solid #D3EAE7;border-radius:20px;padding:4px 11px 4px 9px;margin-bottom:12px}
+.hero.glow .lede{font-size:18px}
+.stat-rail.tiles{grid-template-columns:1fr 1fr;border-top:none;padding-top:0;gap:10px}
+.stat-rail.tiles .stat{background:rgba(255,255,255,.72);border:1px solid var(--rule);border-radius:var(--r);padding:11px 13px}
+.stat-rail.tiles .stat .v{font-size:22px}
+.hero-donut{margin-top:14px;padding:12px 6px 4px;background:rgba(255,255,255,.72);border:1px solid var(--rule);border-radius:var(--r)}
+
 /* ---------- metric cards ---------- */
 .metric{background:var(--card);border:1px solid var(--rule);border-radius:var(--r);padding:15px 16px}
 .metric .k{font-size:11.5px;color:var(--ink-3);font-weight:500}
@@ -293,6 +339,9 @@ tbody tr:last-child td{border-bottom:none}
 .q-table th:last-child,.q-table td:last-child{position:sticky;right:0;z-index:1;
   background:var(--card);box-shadow:-11px 0 14px -12px rgba(11,35,32,.45)}
 .q-table tbody tr:hover td:last-child{background:var(--wash)}
+/* The score breakdown wraps under the score instead of widening its column, so the case text gets the room. */
+.q-table .q-break{max-width:150px;margin-left:auto;line-height:1.4}
+.q-table td.q-case{min-width:300px}
 /* Sits at the end of the review text rather than in its own column, so the link stays with
    the words it belongs to. */
 .open-link{display:inline-flex;align-items:center;margin-left:7px;vertical-align:-2px;
@@ -387,7 +436,7 @@ ul.clean .idx{font-family:var(--font-sora);font-size:11px;font-weight:600;color:
 .page{animation:in .28s ease both}
 @keyframes in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-@media(max-width:1180px){.g-58,.g-85,.g-2{grid-template-columns:1fr}.g-4{grid-template-columns:repeat(2,1fr)}.g-3{grid-template-columns:1fr}}
+@media(max-width:1180px){.g-58,.g-85,.g-2,.masonry{grid-template-columns:minmax(0,1fr)}.g-4{grid-template-columns:repeat(2,1fr)}.g-3{grid-template-columns:1fr}}
 @media(max-width:900px){.shell{grid-template-columns:1fr}aside{position:static;height:auto;flex-direction:column}
   nav{display:flex;overflow-x:auto;padding:8px}.nav-group{display:none}.nav-item{white-space:nowrap}
   main{padding:0 16px 40px}.g-4{grid-template-columns:1fr}.stat-rail{grid-template-columns:1fr;gap:12px}}
@@ -503,6 +552,8 @@ tr.clickable,.thread.clickable{cursor:pointer}
 .fld .clear{position:absolute;right:9px;bottom:9px;border:none;background:none;cursor:pointer;
   color:var(--ink-3);font-size:14px;line-height:1;padding:0}
 .fld .clear:hover{color:var(--sig)}
+.fld .pick.set{padding-right:28px}
+.picklist button.all{font-weight:600;color:var(--deep);border-bottom:1px solid var(--rule-2)}
 .backbar{display:flex;align-items:center;gap:10px;margin-bottom:14px}
 .backbar button{font-family:inherit;font-size:12.5px;font-weight:600;background:var(--card);
   border:1px solid var(--rule);border-radius:var(--r-sm);padding:7px 13px;cursor:pointer;

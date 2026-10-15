@@ -9,7 +9,7 @@ import { toPoints, type BranchPoint } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
 import { MIN_N, NO_MIX, addMix, readOf, scoreColor, share } from '@/lib/signal';
-import { IRRELEVANT, NEUTRAL, STAR, T, monthLabel, plural, riskColor, fmt } from '@/lib/theme';
+import { IRRELEVANT, NEUTRAL, STAR, T, monthLabel, plural, riskColor, fmt, shortBranch } from '@/lib/theme';
 import type { BranchRow, BranchesResponse, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
 
 /** A league-table row: figures for the current view, beside what Google publishes about the branch. */
@@ -322,6 +322,8 @@ function BranchTable({ rows }: { rows: Row[] }) {
 }
 
 type CompMode = 'rating' | 'coverage';
+/** Bars a composition chart draws; past this the axis stops being readable. */
+const COMP_TOP = 30;
 const COMP_MODES: [CompMode, string][] = [['rating', 'Rating mix'], ['coverage', 'Sample coverage']];
 
 function Composition({ rows }: { rows: Row[] }) {
@@ -330,28 +332,30 @@ function Composition({ rows }: { rows: Row[] }) {
     const legend = { position: 'top' as const, align: 'end' as const, labels: { font: { size: 10.5 } } };
     const scales = { x: { ...AXIS, stacked: true, beginAtZero: true }, y: { ...NOGRID, stacked: true } };
     if (mode === 'rating') {
-      const bl = [...rows].sort((a, b) => a.branch.localeCompare(b.branch));
+      /* The branches with the most ratings, where the mix means most. */
+      const total = (r: Row) => r.stars.reduce((a, b) => a + b, 0);
+      const bl = [...rows].sort((a, b) => total(b) - total(a)).slice(0, COMP_TOP);
       return {
         type: 'bar',
         data: {
-          labels: bl.map((b) => b.branch),
+          labels: bl.map((b) => shortBranch(b.branch)),
           datasets: [1, 2, 3, 4, 5].map((s, i) => ({ label: s + '★', data: bl.map((b) => b.stars[i]), backgroundColor: STAR[i], stack: 'a', borderRadius: 2 })),
         },
         options: {
           responsive: true, maintainAspectRatio: false, indexAxis: 'y',
           plugins: {
             legend,
-            tooltip: { callbacks: { label: (c) => { const t = bl[c.dataIndex].stars.reduce((a, b) => a + b, 0); const x = c.parsed.x ?? 0; return `${c.dataset.label} — ${x} (${share(x, t)}%)`; } } },
+            tooltip: { callbacks: { title: (c) => bl[c[0].dataIndex].branch, label: (c) => { const t = total(bl[c.dataIndex]); const x = c.parsed.x ?? 0; return `${c.dataset.label} — ${fmt(x)} (${share(x, t)}%)`; } } },
           },
           scales,
         },
       };
     }
-    const b = rows.filter((r) => r.universe).sort((x, y) => y.universe - x.universe);
+    const b = rows.filter((r) => r.universe).sort((x, y) => y.universe - x.universe).slice(0, COMP_TOP);
     return {
       type: 'bar',
       data: {
-        labels: b.map((x) => x.branch),
+        labels: b.map((x) => shortBranch(x.branch)),
         datasets: [
           { label: 'Inbound Message', data: b.map((x) => x.n), backgroundColor: T.deep, borderRadius: 4, stack: 'a' },
           { label: 'Not captured', data: b.map((x) => Math.max(0, x.universe - x.n)), backgroundColor: '#D6E5E3', borderRadius: 4, stack: 'a' },
@@ -359,7 +363,7 @@ function Composition({ rows }: { rows: Row[] }) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-        plugins: { legend, tooltip: { callbacks: { afterBody: (c) => `coverage ${b[c[0].dataIndex].coverage}%` } } },
+        plugins: { legend, tooltip: { callbacks: { title: (c) => b[c[0].dataIndex].branch, afterBody: (c) => `coverage ${b[c[0].dataIndex].coverage}%` } } },
         scales,
       },
     };
@@ -373,6 +377,11 @@ function Composition({ rows }: { rows: Row[] }) {
           : 'Grey is what exists on Google. Dark is what this prototype has read. Closing this gap is the first job of the production pipeline.'}
       </div>
       {rows.length ? <ChartBox config={config} /> : <div className="empty-note">No branch reviews in this view.</div>}
+      {rows.length > COMP_TOP && (
+        <div className="p-note" style={{ margin: '8px 0 0' }}>
+          The {COMP_TOP} branches with the most {mode === 'rating' ? 'ratings' : 'reviews on Google'}, of {fmt(rows.length)}. The table above lists every branch.
+        </div>
+      )}
     </div>
   );
 }

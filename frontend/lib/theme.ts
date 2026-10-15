@@ -19,6 +19,11 @@ export const sevColor = (sev: number) => (sev === 4 ? T.sig : sev === 3 ? T.warn
 
 /** Single-line excerpt with an ellipsis when cut. */
 export const clip = (text: string, n: number) => text.replace(/\n+/g, ' ').slice(0, n) + (text.length > n ? '…' : '');
+/** A branch name for a chart axis: "FIFGROUP - Bandung II" reads as "Bandung II", and anything still long is cut. Show the full name on hover. */
+export const shortBranch = (name: string, max = 22) => {
+  const s = name.replace(/^FIF\s*GROUP\s*[-–]\s*/i, '');
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+};
 export const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 /** A count with Indonesian thousands separators: 1.499, 14.204. */
 export const fmt = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('id-ID'));

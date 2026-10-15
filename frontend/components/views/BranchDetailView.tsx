@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useMemo } from 'react';
 import { useCaseDrawer } from '@/components/CaseHost';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
+import { Masonry } from '@/components/Masonry';
 import { ApiPage, Chip, Metric, MixBar, NoText, PanelHead, Rating, Tags } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { toPoints, type BranchPoint } from '@/lib/geo';
@@ -61,7 +62,7 @@ function Detail({ view, b, point, points, months, published }: {
         <Metric k="Average rating" v={avg ? avg + '★' : '—'} n={avg ? 'of the reviews read' : 'not available for this branch'} />
       </div>
 
-      <div className="grid g-58 mb">
+      <Masonry>
         <div className="panel">
           <PanelHead title="Branch profile" tag="Google Business Profile" />
           <Info b={b} read={readOf(mix)} published={published} live={point?.row} />
@@ -71,9 +72,6 @@ function Detail({ view, b, point, points, months, published }: {
           <div className="p-note">Where this branch sits against every scored branch in the index.</div>
           <Standing point={point} points={points} />
         </div>
-      </div>
-
-      <div className="grid g-58 mb">
         <div className="panel">
           <PanelHead title="Sentiment over time" tag={months ? `${months.length} months read` : undefined} />
           <div className="p-note">Monthly, from the reviews actually read for this branch.</div>
@@ -96,16 +94,13 @@ function Detail({ view, b, point, points, months, published }: {
             </div>
           )}
         </div>
-      </div>
-
-      <div className="grid g-2">
         <div className="panel">
           <PanelHead title="Category spread" />
           <div className="p-note">Topics tagged on this branch, on the shared severity ladder.</div>
           <Categories view={view} />
         </div>
         <Reviews view={view} />
-      </div>
+      </Masonry>
     </>
   );
 }
