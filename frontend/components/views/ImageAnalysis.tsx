@@ -1,14 +1,19 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { PanelHead } from '@/components/ui';
+import { Chips, PanelHead } from '@/components/ui';
 import { T } from '@/lib/theme';
 
-/* Image analysis: upload a picture, get five verdicts back from Gemini.
+/* Image analysis: upload a picture, get five verdicts back from Gemini or Mistral.
  *
- * The request goes to /vision (app/vision/route.ts), which holds the API key and forwards the
- * picture to Google. Nothing is stored on either side, so the history below lives in this tab
- * and is gone on reload. */
+ * The request goes to /vision (app/vision/route.ts), which holds the API keys and forwards the
+ * picture to the chosen provider. Both get the same prompt and the same scoring rules, so the
+ * same picture can be sent to each and the answers compared. Nothing is stored on either side,
+ * so the history below lives in this tab and is gone on reload. */
+
+type Provider = 'gemini' | 'mistral';
+const PROVIDERS: [Provider, string][] = [['gemini', 'Gemini'], ['mistral', 'Mistral']];
+const PROVIDER_NAME: Record<Provider, string> = { gemini: 'Google Gemini', mistral: 'Mistral' };
 
 type CheckId = 'ai_generated' | 'tampered' | 'indecent' | 'misleading' | 'spam';
 
@@ -42,7 +47,7 @@ const STATUS: Record<CheckedItem['status'], { label: string; cls: string }> = {
 };
 
 /** What POST /vision returns. */
-type Analysis = Record<CheckId, Verdict> & { model: string; blocked: string | null; extracted_text: string; summary: string };
+type Analysis = Record<CheckId, Verdict> & { provider?: Provider; model: string; seconds?: number; blocked: string | null; extracted_text: string; summary: string };
 
 interface Result extends Analysis {
   id: string;
@@ -60,9 +65,10 @@ const when = (iso: string) =>
   new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 const tone = (score: number) => (score >= FLAG_AT ? T.sig : score >= 35 ? 'var(--warn)' : 'var(--grow)');
 
-async function analyseImage(file: File): Promise<Analysis> {
+async function analyseImage(file: File, provider: Provider): Promise<Analysis> {
   const form = new FormData();
   form.set('file', file);
+  form.set('provider', provider);
   const res = await fetch('/vision', { method: 'POST', body: form });
   const body = (await res.json().catch(() => null)) as (Analysis & { error?: string }) | null;
   if (!res.ok || !body) throw new Error(body?.error ?? `The analysis failed (${res.status}).`);
@@ -77,6 +83,7 @@ export function ImageAnalysis() {
   const [over, setOver] = useState(false);
   const [rows, setRows] = useState<Result[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [provider, setProvider] = useState<Provider>('gemini');
   const input = useRef<HTMLInputElement>(null);
 
   /* Previews are object URLs, which the browser holds until told otherwise. The ones handed to a
@@ -106,11 +113,10 @@ export function ImageAnalysis() {
     setBusy(true);
     setError('');
     try {
-      const a = await analyseImage(file);
-      const result: Result = { ...a, id: `${Date.now()}-${file.name}`, name: file.name, size: file.size, preview, analysedAt: new Date().toISOString() };
+      const a = await analyseImage(file, provider);
+      const result: Result = { ...a, id: `${Date.now()}-${provider}-${file.name}`, name: file.name, size: file.size, preview, analysedAt: new Date().toISOString() };
       setRows((r) => [result, ...r]);
       setOpenId(result.id);
-      clear();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -127,7 +133,7 @@ export function ImageAnalysis() {
       <div className="sim mb">
         <span>⚠</span>
         <span>
-          Pictures are sent to <b>Google Gemini</b> to be judged and are not stored by this dashboard.
+          Pictures are sent to <b>{PROVIDER_NAME[provider]}</b> to be judged and are not stored by this dashboard.
           The AI-generated and altered scores are a model&apos;s reading of what is visible, not forensic proof — treat a flag as a reason to look, not as a finding.
           The misleading check judges against a written description of FIF: its official channels are taken from fifgroup.co.id, its practices are not yet confirmed by FIF.
         </span>
@@ -145,7 +151,11 @@ export function ImageAnalysis() {
           <PanelHead title="Analyse an image" />
           <div className="p-note">
             One picture at a time: a screenshot of a post, a flyer, an advertisement carrying the FIF name.
-            It is checked five ways, and each check answers on its own.
+            It is checked five ways, and each check answers on its own. The picture stays after a run, so it can be sent to the other model to compare.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span className="sub" style={{ margin: 0 }}>Model</span>
+            <Chips options={PROVIDERS} value={provider} onPick={setProvider} />
           </div>
 
           <label
@@ -162,7 +172,7 @@ export function ImageAnalysis() {
           </label>
           {file && <div className="sub" style={{ margin: '8px 0 0' }}>{file.name} · {kb(file.size)}</div>}
           {error && <div className="sub warn-text" role="alert" style={{ margin: '8px 0 0' }}>{error}</div>}
-          {busy && <div className="sub" role="status" style={{ margin: '8px 0 0' }}>Sending the picture to Gemini and reading its answer. This usually takes a few seconds.</div>}
+          {busy && <div className="sub" role="status" style={{ margin: '8px 0 0' }}>Sending the picture to {PROVIDER_NAME[provider]} and reading its answer. This usually takes a few seconds.</div>}
 
           <div className="cc" style={{ marginTop: 14 }}>
             <button className="btn" onClick={analyse} disabled={!file || busy}
@@ -174,7 +184,7 @@ export function ImageAnalysis() {
         </div>
 
         <div className="panel">
-          <PanelHead title="Result" tag={shown ? `${when(shown.analysedAt)} WIB · ${shown.model}` : undefined} />
+          <PanelHead title="Result" tag={shown ? `${when(shown.analysedAt)} WIB · ${shown.model}${shown.seconds != null ? ` · ${shown.seconds}s` : ''}` : undefined} />
           {shown ? <ResultCard r={shown} /> : <div className="empty">Nothing analysed yet. Choose a picture on the left.</div>}
         </div>
       </div>
@@ -230,7 +240,7 @@ function ResultCard({ r }: { r: Result }) {
       </div>
       {r.blocked && (
         <div className="blocked" style={{ marginBottom: 12 }}>
-          <b>Gemini refused this image ({r.blocked}).</b> Only the indecency check has an answer; the other four were not assessed.
+          <b>{r.provider === 'mistral' ? 'Mistral' : 'Gemini'} refused this image ({r.blocked}).</b> Only the indecency check has an answer; the other four were not assessed.
         </div>
       )}
       {CHECKS.map((c) => {

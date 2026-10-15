@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { LEVELS, NO_SCOPE, useFilters, type Level } from '@/lib/filters';
+import { LEVELS, NO_SCOPE, useFilters, type Level, type ScopeSel } from '@/lib/filters';
 import { useReference } from '@/lib/reference';
 import { coversPlace, isScoped, pickScope, scopeOptions } from '@/lib/scope';
 import type { PeriodFilter, SourceFilter } from '@/lib/types';
@@ -25,6 +25,12 @@ const FIELD: Record<Level, [string, string]> = {
   kota: ['Kota / kabupaten', 'All kota'],
   kecamatan: ['Kecamatan', 'All kecamatan'],
   branch: ['Branch', 'All branches'],
+};
+
+/** The selection with `level` and every field below it cleared, keeping the fields above. */
+const clearFrom = (sel: ScopeSel, level: Level): ScopeSel => {
+  const at = LEVELS.indexOf(level);
+  return Object.fromEntries(LEVELS.map((lv, i) => [lv, i < at ? sel[lv] : null])) as ScopeSel;
 };
 
 /** One hierarchy control for the whole dashboard: each field filters the next. */
@@ -57,11 +63,13 @@ export function ScopeControl({ off, title }: { off: boolean; title: string }) {
           {LEVELS.map((lv) => (
             <ScopeField key={lv} level={lv}
               value={lv === 'branch' ? (sel.branch ? place(sel.branch)?.name ?? sel.branch : '') : sel[lv] ?? ''}
-              onPick={(v) => setFilter('scope', pickScope(lv, v, places))} />
+              onPick={(v) => setFilter('scope', pickScope(lv, v, places))}
+              onClear={() => setFilter('scope', clearFrom(sel, lv))} />
           ))}
           <div className="pop-foot">
             <span className="pop-count">{inScope} {inScope === 1 ? 'branch' : 'branches'} in scope</span>
-            <button className="btn2" onClick={() => { setFilter('scope', NO_SCOPE); setOpen(false); }}>Clear scope</button>
+            <button className="btn2" disabled={!trail.length} onClick={() => setFilter('scope', NO_SCOPE)}>Clear all</button>
+            <button className="btn2 solid" onClick={() => setOpen(false)}>Done</button>
           </div>
         </div>
       )}
@@ -69,7 +77,7 @@ export function ScopeControl({ off, title }: { off: boolean; title: string }) {
   );
 }
 
-function ScopeField({ level, value, onPick }: { level: Level; value: string; onPick: (value: string) => void }) {
+function ScopeField({ level, value, onPick, onClear }: { level: Level; value: string; onPick: (value: string) => void; onClear: () => void }) {
   const { filters } = useFilters();
   const { places } = useReference();
   const [term, setTerm] = useState<string | null>(null);
@@ -86,8 +94,17 @@ function ScopeField({ level, value, onPick }: { level: Level; value: string; onP
         onChange={(e) => setTerm(e.target.value)}
         onFocus={() => setTerm('')}
         onBlur={() => setTerm(null)} />
+      {value && !listing && (
+        <button className="clear" onClick={onClear} title={`Clear ${label.toLowerCase()}`} aria-label={`Clear ${label.toLowerCase()}`}>×</button>
+      )}
       {listing && (
         <div className="picklist on">
+          {/* Every option at this level at once: the same as leaving the field empty. */}
+          {!q && (
+            <button className="all" onMouseDown={(e) => { e.preventDefault(); onClear(); setTerm(null); (document.activeElement as HTMLElement | null)?.blur(); }}>
+              Select all<div className="sub">{placeholder}{value ? ' — clears this field and the ones below' : ''}</div>
+            </button>
+          )}
           {options.length ? options.map((o) => (
             /* mousedown, not click: the input's blur closes the list before a click would land. */
             <button key={o.value} onMouseDown={(e) => { e.preventDefault(); onPick(o.value); setTerm(null); (document.activeElement as HTMLElement | null)?.blur(); }}>

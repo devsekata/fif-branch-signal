@@ -1,19 +1,35 @@
-/* Image analysis through Gemini.
+/* Image analysis through Gemini or Mistral.
  *
- * POST one picture as multipart form data (`file`); get five scores back. The key lives in
- * GEMINI_API_KEY in .env.local, server-side only, so it never reaches the browser — the same
- * arrangement as the Sekata proxy. Nothing is stored: the picture goes to Google for the one
- * request and the answer goes back to the page. */
+ * POST one picture as multipart form data (`file`), and optionally `provider` ("gemini" or
+ * "mistral"; VISION_PROVIDER decides when it is left out); get five scores back. The keys live in
+ * GEMINI_API_KEY and MISTRAL_API_KEY in .env.local, server-side only, so they never reach the
+ * browser — the same arrangement as the Sekata proxy. Nothing is stored: the picture goes to the
+ * provider for the one request and the answer goes back to the page. Both providers get the same
+ * prompt and the same schema, and their answers go through the same scoring rules below, so the
+ * two can be compared on the same pictures. */
 
 import { FIF_CONTEXT } from '@/lib/fifContext';
 
-const KEY = process.env.GEMINI_API_KEY;
+type Provider = 'gemini' | 'mistral';
+const PROVIDERS: Provider[] = ['gemini', 'mistral'];
+const DEFAULT_PROVIDER: Provider = process.env.VISION_PROVIDER === 'mistral' ? 'mistral' : 'gemini';
+const PROVIDER_NAME: Record<Provider, string> = { gemini: 'Gemini', mistral: 'Mistral' };
+
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
 /* The newest model is asked first because it reads small print and judges intent better; the
  * older one stands behind it because the newest is also the one most often answering "overloaded". */
-const MODELS = [...new Set([process.env.GEMINI_MODEL || 'gemini-3.8-flash', process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash'])];
-const endpoint = (model: string) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+const GEMINI_MODELS = [...new Set([process.env.GEMINI_MODEL || 'gemini-3.8-flash', process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash'])];
+const geminiEndpoint = (model: string) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
+/* Medium reads images and answers to a schema at a fraction of Large's cost; Large stands behind it. */
+const MISTRAL_MODELS = [...new Set([process.env.MISTRAL_MODEL || 'mistral-medium-latest', process.env.MISTRAL_FALLBACK_MODEL || 'mistral-large-latest'])];
+const MISTRAL_ENDPOINT = 'https://api.mistral.ai/v1/chat/completions';
+
 /** How long one attempt may take before the next model is tried. */
 const ATTEMPT_MS = 75_000;
+/** Answers that mean "busy, try again or try the other model". */
+const BUSY = [429, 500, 502, 503];
 
 const ACCEPT = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -172,72 +188,127 @@ interface GeminiResponse {
   error?: { message?: string };
 }
 
-export async function POST(req: Request) {
-  if (!KEY) return fail(503, 'GEMINI_API_KEY is not set. Add it to frontend/.env.local and restart the dev server.');
+/** What a provider hands back: the model that answered and its text, or a response to send as is. */
+type Answer = { model: string; text: string; blocked?: string } | { failed: Response };
 
-  let file: FormDataEntryValue | null;
-  try { file = (await req.formData()).get('file'); } catch { return fail(400, 'Send the picture as multipart form data, in a field named "file".'); }
-  if (!(file instanceof File)) return fail(400, 'No picture in the request.');
-  if (!ACCEPT.includes(file.type)) return fail(415, 'Only JPG, PNG or WebP pictures can be analysed.');
-  if (file.size > MAX_BYTES) return fail(413, 'That picture is over the 8 MB limit.');
-
-  const data = Buffer.from(await file.arrayBuffer()).toString('base64');
-  const send = (model: string) => fetch(endpoint(model), {
-    method: 'POST',
-    signal: AbortSignal.timeout(ATTEMPT_MS),
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': KEY },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ inlineData: { mimeType: file.type, data } }, { text: PROMPT }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA },
-      safetySettings: SAFETY,
-    }),
-  });
-  /* Each model gets two attempts. A connection that fails to open, a model that answers
-   * "overloaded" and an attempt that runs out of time all move on to the next try. */
-  const BUSY = [429, 500, 503];
-  let res: Response | undefined;
-  let last: unknown;
-  let MODEL = MODELS[0];
-  attempts: for (const model of MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt) await new Promise((r) => setTimeout(r, 2000));
+/** Tries each model twice. A connection that fails to open, a model that answers "busy" and an
+ *  attempt that runs out of time all move on to the next try. */
+async function attempt(models: string[], send: (model: string) => Promise<Response>) {
+  let res: Response | undefined, last: unknown, model = models[0];
+  attempts: for (const m of models) {
+    for (let i = 0; i < 2; i++) {
+      if (i) await new Promise((r) => setTimeout(r, 2000));
       try {
-        res = await send(model);
-        MODEL = model;
+        res = await send(m);
+        model = m;
         if (!BUSY.includes(res.status)) break attempts;
         /* Out of quota is not going to change in two seconds; go straight to the other model. */
         if (res.status === 429) break;
       } catch (e) { last = e; }
     }
   }
-  if (!res) {
-    const cause = (last as { cause?: { code?: string; message?: string } }).cause;
-    const why = cause?.code ?? cause?.message ?? (last instanceof Error ? last.message : String(last));
-    return fail(502, `Gemini could not be reached (${why}), after trying ${MODELS.join(' and ')} twice each. Check the internet or VPN connection of the machine running the dashboard and try again.`);
-  }
+  return { res, last, model };
+}
 
+function unreachable(name: string, models: string[], last: unknown) {
+  const cause = (last as { cause?: { code?: string; message?: string } }).cause;
+  const why = cause?.code ?? cause?.message ?? (last instanceof Error ? last.message : String(last));
+  return fail(502, `${name} could not be reached (${why}), after trying ${models.join(' and ')} twice each. Check the internet or VPN connection of the machine running the dashboard and try again.`);
+}
+
+async function askGemini(mimeType: string, data: string): Promise<Answer> {
+  if (!GEMINI_KEY) return { failed: fail(503, 'GEMINI_API_KEY is not set. Add it to frontend/.env.local and restart the dev server.') };
+  const { res, last, model } = await attempt(GEMINI_MODELS, (m) => fetch(geminiEndpoint(m), {
+    method: 'POST',
+    signal: AbortSignal.timeout(ATTEMPT_MS),
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data } }, { text: PROMPT }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA },
+      safetySettings: SAFETY,
+    }),
+  }));
+  if (!res) return { failed: unreachable('Gemini', GEMINI_MODELS, last) };
   const body = (await res.json().catch(() => null)) as GeminiResponse | null;
-  if (!res.ok) return fail(502, `Gemini answered ${res.status}${BUSY.includes(res.status) ? ` on every attempt (${MODELS.join(', ')})` : ''}: ${body?.error?.message ?? 'no detail given'}`);
-
+  if (!res.ok) return { failed: fail(502, `Gemini answered ${res.status}${BUSY.includes(res.status) ? ` on every attempt (${GEMINI_MODELS.join(', ')})` : ''}: ${body?.error?.message ?? 'no detail given'}`) };
   const candidate = body?.candidates?.[0];
   const blocked = body?.promptFeedback?.blockReason ?? (['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'IMAGE_SAFETY'].includes(candidate?.finishReason ?? '') ? candidate?.finishReason : undefined);
-  const text = candidate?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+  return { model, blocked, text: candidate?.content?.parts?.map((p) => p.text ?? '').join('') ?? '' };
+}
+
+/** The Gemini schema in standard JSON Schema: lower-case types, and closed objects so a strict answer keeps to it. */
+function jsonSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(jsonSchema);
+  if (!node || typeof node !== 'object') return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node)) out[k] = k === 'type' && typeof v === 'string' ? v.toLowerCase() : jsonSchema(v);
+  if (out.type === 'object') out.additionalProperties = false;
+  return out;
+}
+
+interface MistralResponse {
+  choices?: { finish_reason?: string; message?: { content?: string | { type?: string; text?: string }[] } }[];
+  message?: string;
+  detail?: unknown;
+}
+
+async function askMistral(mimeType: string, data: string): Promise<Answer> {
+  if (!MISTRAL_KEY) return { failed: fail(503, 'MISTRAL_API_KEY is not set. Add it to frontend/.env.local and restart the dev server.') };
+  const { res, last, model } = await attempt(MISTRAL_MODELS, (m) => fetch(MISTRAL_ENDPOINT, {
+    method: 'POST',
+    signal: AbortSignal.timeout(ATTEMPT_MS),
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${MISTRAL_KEY}` },
+    body: JSON.stringify({
+      model: m,
+      temperature: 0,
+      messages: [{ role: 'user', content: [{ type: 'text', text: PROMPT }, { type: 'image_url', image_url: `data:${mimeType};base64,${data}` }] }],
+      response_format: { type: 'json_schema', json_schema: { name: 'image_review', schema: jsonSchema(SCHEMA), strict: true } },
+    }),
+  }));
+  if (!res) return { failed: unreachable('Mistral', MISTRAL_MODELS, last) };
+  const body = (await res.json().catch(() => null)) as MistralResponse | null;
+  if (!res.ok) {
+    const detail = body?.message ?? (body?.detail ? JSON.stringify(body.detail).slice(0, 300) : 'no detail given');
+    return { failed: fail(502, `Mistral answered ${res.status}${BUSY.includes(res.status) ? ` on every attempt (${MISTRAL_MODELS.join(', ')})` : ''}: ${detail}`) };
+  }
+  const content = body?.choices?.[0]?.message?.content;
+  const text = typeof content === 'string' ? content : (content ?? []).map((c) => c.text ?? '').join('');
+  return { model, text };
+}
+
+export async function POST(req: Request) {
+  let form: FormData;
+  try { form = await req.formData(); } catch { return fail(400, 'Send the picture as multipart form data, in a field named "file".'); }
+  const file = form.get('file');
+  const asked = form.get('provider');
+  const provider: Provider = PROVIDERS.includes(asked as Provider) ? (asked as Provider) : DEFAULT_PROVIDER;
+  if (!(file instanceof File)) return fail(400, 'No picture in the request.');
+  if (!ACCEPT.includes(file.type)) return fail(415, 'Only JPG, PNG or WebP pictures can be analysed.');
+  if (file.size > MAX_BYTES) return fail(413, 'That picture is over the 8 MB limit.');
+
+  const data = Buffer.from(await file.arrayBuffer()).toString('base64');
+  const started = Date.now();
+  const answer = provider === 'mistral' ? await askMistral(file.type, data) : await askGemini(file.type, data);
+  if ('failed' in answer) return answer.failed;
+  const { model: MODEL, blocked, text } = answer;
+  const NAME = PROVIDER_NAME[provider];
+  const seconds = Math.round((Date.now() - started) / 100) / 10;
 
   /* A refusal is itself the answer to the indecency question, so it is reported as one rather than as an error. */
   if (blocked && !text) {
     const none = { score: 0, reason: 'Not assessed: the model refused the image before judging it.' };
     return Response.json({
-      model: MODEL, blocked,
+      provider, model: MODEL, seconds, blocked,
       ai_generated: none, tampered: { ...none, suspect_areas: [] }, misleading: { ...none, signals: [], needs_checking: [], items_checked: [] }, spam: { ...none, category: 'none', signals: [] },
-      indecent: { score: 100, reason: `Gemini's safety filter refused this image (${blocked}), which it does for explicit or prohibited content.` },
+      indecent: { score: 100, reason: `${NAME}'s safety filter refused this image (${blocked}), which it does for explicit or prohibited content.` },
       extracted_text: '', summary: 'The image was refused by the safety filter, so only the indecency check has an answer.',
     });
   }
 
   let parsed: Record<string, unknown>;
-  try { parsed = JSON.parse(text); } catch { return fail(502, 'Gemini returned something that is not JSON, so there is no result to show.'); }
+  try { parsed = JSON.parse(text); } catch { return fail(502, `${NAME} returned something that is not JSON, so there is no result to show.`); }
 
-  const out: Record<string, unknown> = { model: MODEL, blocked: null };
+  const out: Record<string, unknown> = { provider, model: MODEL, seconds, blocked: null };
   for (const id of CHECKS) {
     const v = (parsed[id] ?? {}) as { score?: unknown; reason?: unknown; suspect_areas?: unknown; signals?: unknown; needs_checking?: unknown; items_checked?: unknown };
     if (id === 'misleading') {

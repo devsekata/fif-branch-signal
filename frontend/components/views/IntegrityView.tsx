@@ -7,7 +7,7 @@ import { useApi } from '@/lib/api';
 import { useReference } from '@/lib/reference';
 import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
 import { dupCount, dupUsers } from '@/lib/social';
-import { T, plural } from '@/lib/theme';
+import { T, plural, fmt } from '@/lib/theme';
 import type { CollectionDay, IntegrityResponse, SignalOverviewResponse } from '@/lib/types';
 
 type BurstKey = keyof CollectionDay & string;
@@ -68,7 +68,7 @@ function GoogleSummary({ c, g, big, wide }: { c: SignalOverviewResponse['collect
           In this view, {five}% of reviews are five stars against {one}% at one star,{' '}
           {notext}% carry no text at all, {firstTime}% come from accounts holding one review or fewer in their lifetime,{' '}
           and {Math.round(g.office_hours_pct)}% were posted inside branch operating hours{wide ? ' across all branches' : ''}.{' '}
-          {big ? `${big.branch} collected ${big.n} reviews on ${big.date} alone, ${big.notext} of them wordless. ` : ''}
+          {big ? `${big.branch} collected ${fmt(big.n)} reviews on ${big.date} alone, ${fmt(big.notext)} of them wordless. ` : ''}
           Treat the public average as a measure of how hard a branch asks, and judge service on the complaint side instead.
         </p>
       </div>
@@ -93,7 +93,7 @@ function Flags({ label, items }: { label: string; items: [string, number][] }) {
     <div className="p-note mb">
       <b>{label}:</b>{' '}
       {hits.length
-        ? items.map(([k, n], i) => <span key={k}>{i > 0 && ' · '}{k} <b style={{ color: n > 0 ? T.sig : undefined }}>{n}</b></span>)
+        ? items.map(([k, n], i) => <span key={k}>{i > 0 && ' · '}{k} <b style={{ color: n > 0 ? T.sig : undefined }}>{fmt(n)}</b></span>)
         : `nothing on any of ${items.length} checks (${items.map(([k]) => k.toLowerCase()).join(', ')}).`}
     </div>
   );
@@ -110,10 +110,10 @@ function Bursts({ rows }: { rows: CollectionDay[] }) {
             <tr key={r.branch + r.date}>
               <td className="mono">{r.date}</td>
               <td>{r.branch}</td>
-              <td className="n"><b>{r.n}</b></td>
+              <td className="n"><b>{fmt(r.n)}</b></td>
               <td className="n">{r.avg?.toFixed(2)}</td>
               <td className="n">
-                {r.notext}
+                {fmt(r.notext)}
                 <span className="sub" style={{ display: 'inline', marginLeft: 4 }}>{((100 * r.notext) / Math.max(1, r.n)).toFixed(0)}%</span>
               </td>
             </tr>
@@ -158,14 +158,14 @@ function InstagramIntegrity({ view, ig }: { view: View; ig: IntegrityResponse['i
       {view.isSet && (
         <div className="sim" style={{ marginBottom: 12 }}>
           <span>⚠</span>
-          <span>The Google panels on this page are scoped to <b>{view.scopeName}</b>. This one is not — Instagram comments carry no area, so it keeps showing all {ig.threads_read} threads.</span>
+          <span>The Google panels on this page are scoped to <b>{view.scopeName}</b>. This one is not — Instagram comments carry no area, so it keeps showing all {fmt(ig.threads_read)} threads.</span>
         </div>
       )}
       <div className="grid g-4 mb">
         <Metric k="Identical comment sets" v={dup.length} n="same text, different accounts" />
         <Metric k="Accounts involved" v={ig.accounts_involved} n="posted within minutes of each other" />
         <Metric k="Reaction-only comments" v={ig.reaction_only_comments} n="emoji with no words, the social echo of a bare star" />
-        <Metric k="Threads read" v={ig.threads_read} n={posts != null ? `from ${posts} ${plural(posts, 'post', 'posts')}` : 'on the official account'} />
+        <Metric k="Threads read" v={ig.threads_read} n={posts != null ? `from ${fmt(posts)} ${plural(posts, 'post', 'posts')}` : 'on the official account'} />
       </div>
       <Flags
         label="What the integrity scan flagged on Instagram"

@@ -1,5 +1,6 @@
 'use client';
 
+import { fmt } from '@/lib/theme';
 import { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -59,7 +60,7 @@ function tipScore(mix: Mix, enough: boolean, rank: string | null) {
     score.append(el('b', '', String(mix.score)), el('span', '', 'sentiment score'));
     if (rank) score.append(el('em', '', rank));
   } else {
-    score.append(el('b', '', '—'), el('span', '', `${mix.total} review${mix.total === 1 ? '' : 's'} — under the ${MIN_N} minimum, not scored`));
+    score.append(el('b', '', '—'), el('span', '', `${fmt(mix.total)} review${mix.total === 1 ? '' : 's'} — under the ${MIN_N} minimum, not scored`));
   }
   return score;
 }
@@ -78,7 +79,7 @@ function tipMix(mix: Mix): HTMLElement[] {
   const key = el('div', 'tip-mix');
   for (const [v, label, c] of [[mix.good, 'positive', '#1F8C84'], [mix.neutral, 'neutral', '#7C9491'], [mix.bad, 'negative', '#C8322B'], [mix.irrelevant, 'irrelevant/spam', '#54685F']] as const) {
     const s = el('span', '');
-    const b = el('b', '', v.toLocaleString('en-US'));
+    const b = el('b', '', v.toLocaleString('id-ID'));
     b.style.color = c;
     s.append(b, ` ${label}`);
     key.append(s);
@@ -93,8 +94,8 @@ function areaTip(name: string, a: Area | undefined, action: string) {
     box.append(el('div', 'pop-b', 'No branch in this area yet.'));
     return box;
   }
-  box.append(el('div', 'tip-where', `${a.branches} ${a.branches === 1 ? 'branch' : 'branches'}`), tipScore(a.mix, a.enough, null), ...tipMix(a.mix));
-  box.append(row('Reviews read', (a.mix.total + a.mix.irrelevant).toLocaleString('en-US')));
+  box.append(el('div', 'tip-where', `${fmt(a.branches)} ${a.branches === 1 ? 'branch' : 'branches'}`), tipScore(a.mix, a.enough, null), ...tipMix(a.mix));
+  box.append(row('Inbound Message', (a.mix.total + a.mix.irrelevant).toLocaleString('id-ID')));
   if (a.unanswered > 0) box.append(row('Unanswered complaints', String(a.unanswered), true));
   box.append(el('div', 'pop-b', action));
   return box;
@@ -106,7 +107,7 @@ function branchTip(p: BranchPoint, ranked: number) {
   const where = [p.place.kecamatan, p.place.kota].filter(Boolean).join(', ');
   if (where) box.append(el('div', 'tip-where', where));
   box.append(tipScore(p.mix, p.enough, p.enough && p.rank ? `#${p.rank} of ${ranked}` : null), ...tipMix(p.mix));
-  box.append(row('Reviews read', (p.mix.total + p.mix.irrelevant).toLocaleString('en-US')));
+  box.append(row('Inbound Message', (p.mix.total + p.mix.irrelevant).toLocaleString('id-ID')));
   if (p.unanswered > 0) box.append(row('Unanswered complaints', String(p.unanswered), true));
   box.append(el('div', 'pop-b', 'Click to open the branch'));
   return box;

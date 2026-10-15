@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Fragment, useEffect, type ReactNode } from 'react';
 import { useApi } from '@/lib/api';
 import { PeriodControl, ScopeControl, SourceControl } from '@/components/ScopeControl';
+import { Toaster } from '@/components/Toaster';
 import { roleName } from '@/lib/caseflow';
 import { FiltersProvider, useFilters } from '@/lib/filters';
 import { PAGES, branchIdOfPath, pageForPath, type PageId, type ScopeCap } from '@/lib/pages';
@@ -174,6 +175,7 @@ export function Shell({ children }: { children: ReactNode }) {
             {children}
           </main>
         </div>
+        <Toaster />
       </ReferenceProvider>
     </FiltersProvider>
   );

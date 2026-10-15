@@ -4,13 +4,14 @@ import { useRouter } from 'next/navigation';
 import { useMemo } from 'react';
 import { useCaseDrawer } from '@/components/CaseHost';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
+import { Masonry } from '@/components/Masonry';
 import { ApiPage, Chip, Metric, MixBar, NoText, PanelHead, Rating, Tags } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { toPoints, type BranchPoint } from '@/lib/geo';
 import { useReference, type BranchPlace } from '@/lib/reference';
 import { useView, type View } from '@/lib/scope';
 import { MIN_N, readOf, scoreColor, share } from '@/lib/signal';
-import { IRRELEVANT, NEUTRAL, T, monthLabel, sevColor } from '@/lib/theme';
+import { IRRELEVANT, NEUTRAL, T, monthLabel, sevColor, fmt } from '@/lib/theme';
 import type { BranchRow, BranchesResponse, CasesResponse, ComplaintsResponse, SignalBranch, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
 
 export function BranchDetailView({ branchId }: { branchId: string }) {
@@ -56,12 +57,12 @@ function Detail({ view, b, point, points, months, published }: {
       </div>
       <div className="grid g-4 mb">
         <Metric k="Sentiment score" v={enough ? mix.score : '—'} n={enough ? 'on the full window' : `under the ${MIN_N}-review minimum`} color={scoreColor(mix.score, enough)} />
-        <Metric k="Reviews read" v={readOf(mix).toLocaleString('en-US')} n="from the Google scrape" />
-        <Metric k="Negative share" v={share(mix.bad, readOf(mix)) + '%'} n={`${mix.bad} of ${readOf(mix)} reviews`} color={mix.bad / Math.max(1, readOf(mix)) > 0.2 ? T.sig : undefined} />
+        <Metric k="Inbound Message" v={readOf(mix).toLocaleString('id-ID')} n="from the Google scrape" />
+        <Metric k="Negative share" v={share(mix.bad, readOf(mix)) + '%'} n={`${fmt(mix.bad)} of ${readOf(mix)} reviews`} color={mix.bad / Math.max(1, readOf(mix)) > 0.2 ? T.sig : undefined} />
         <Metric k="Average rating" v={avg ? avg + '★' : '—'} n={avg ? 'of the reviews read' : 'not available for this branch'} />
       </div>
 
-      <div className="grid g-58 mb">
+      <Masonry>
         <div className="panel">
           <PanelHead title="Branch profile" tag="Google Business Profile" />
           <Info b={b} read={readOf(mix)} published={published} live={point?.row} />
@@ -71,9 +72,6 @@ function Detail({ view, b, point, points, months, published }: {
           <div className="p-note">Where this branch sits against every scored branch in the index.</div>
           <Standing point={point} points={points} />
         </div>
-      </div>
-
-      <div className="grid g-58 mb">
         <div className="panel">
           <PanelHead title="Sentiment over time" tag={months ? `${months.length} months read` : undefined} />
           <div className="p-note">Monthly, from the reviews actually read for this branch.</div>
@@ -84,10 +82,10 @@ function Detail({ view, b, point, points, months, published }: {
           <div className="p-note">A wordless high rating counts as neutral, not positive. It is a tap, not an opinion.</div>
           <MixBar mix={mix} height={14} />
           <div className="seg-key" style={{ marginTop: 12, flexDirection: 'column', gap: 7 }}>
-            <span><i className="dot" style={{ background: T.grow }} />positive — {mix.good} ({share(mix.good, readOf(mix))}%)</span>
-            <span><i className="dot" style={{ background: NEUTRAL }} />neutral — {mix.neutral} ({share(mix.neutral, readOf(mix))}%)</span>
-            <span><i className="dot" style={{ background: T.sig }} />negative — {mix.bad} ({share(mix.bad, readOf(mix))}%)</span>
-            <span><i className="dot" style={{ background: IRRELEVANT }} />irrelevant/spam — {mix.irrelevant} ({share(mix.irrelevant, readOf(mix))}%), left out of the score</span>
+            <span><i className="dot" style={{ background: T.grow }} />positive — {fmt(mix.good)} ({share(mix.good, readOf(mix))}%)</span>
+            <span><i className="dot" style={{ background: NEUTRAL }} />neutral — {fmt(mix.neutral)} ({share(mix.neutral, readOf(mix))}%)</span>
+            <span><i className="dot" style={{ background: T.sig }} />negative — {fmt(mix.bad)} ({share(mix.bad, readOf(mix))}%)</span>
+            <span><i className="dot" style={{ background: IRRELEVANT }} />irrelevant/spam — {fmt(mix.irrelevant)} ({share(mix.irrelevant, readOf(mix))}%), left out of the score</span>
           </div>
           <div className="formula" style={{ marginTop: 14 }}>score = <b>(positive − negative) ÷ total</b> → {enough ? mix.score : 'withheld'}</div>
           {!enough && (
@@ -96,16 +94,13 @@ function Detail({ view, b, point, points, months, published }: {
             </div>
           )}
         </div>
-      </div>
-
-      <div className="grid g-2">
         <div className="panel">
           <PanelHead title="Category spread" />
           <div className="p-note">Topics tagged on this branch, on the shared severity ladder.</div>
           <Categories view={view} />
         </div>
         <Reviews view={view} />
-      </div>
+      </Masonry>
     </>
   );
 }
@@ -139,8 +134,8 @@ function Info({ b, read, published, live }: { b: BranchPlace; read: number; publ
         ? row('Opening hours', <>{days.map((d) => <div key={d}>{d}</div>)}</>)
         : row('Opening hours', synced ? 'None published' : 'Not captured', true, synced ? 'Google lists no opening hours for this place' : 'This branch has not been synced with Google place details yet')}
       {row('Google rating',
-        score != null ? `${score}★ published${universe ? `, from ${universe.toLocaleString('en-US')} reviews` : ''}` : 'Not available', score == null,
-        universe ? `We read ${read} of them — ${((100 * read) / universe).toFixed(1)}% coverage` : undefined)}
+        score != null ? `${score}★ published${universe ? `, from ${universe.toLocaleString('id-ID')} reviews` : ''}` : 'Not available', score == null,
+        universe ? `We read ${fmt(read)} of them — ${((100 * read) / universe).toFixed(1)}% coverage` : undefined)}
       {row('Owner reply time', reply != null ? `${reply >= 48 ? `${(reply / 24).toFixed(1)} days` : `${Math.round(reply)} hours`} on average` : 'No dated reply', reply == null,
         reply != null ? 'From the reviews the owner answered and Google dated' : 'Google gives no reply date for this branch')}
       {row('Owner replies', published?.owner_reply_rate_pct != null ? `${published.owner_reply_rate_pct}% of reviews answered` : 'Not captured', published?.owner_reply_rate_pct == null)}
@@ -151,7 +146,7 @@ function Info({ b, read, published, live }: { b: BranchPlace; read: number; publ
 
 function Standing({ point, points }: { point: BranchPoint; points: BranchPoint[] }) {
   if (!point.enough || point.rank === null) {
-    return <div className="empty-note">Not ranked. This branch has {point.mix.total} reviews, below the {MIN_N} minimum, so placing it against the others would be misleading.</div>;
+    return <div className="empty-note">Not ranked. This branch has {fmt(point.mix.total)} reviews, below the {MIN_N} minimum, so placing it against the others would be misleading.</div>;
   }
   const scored = points.filter((p) => p.enough).sort((a, b) => a.rank! - b.rank!);
   const n = scored.length, pos = point.rank;
@@ -160,7 +155,7 @@ function Standing({ point, points }: { point: BranchPoint; points: BranchPoint[]
   const peerPos = peers.findIndex((p) => p.place.id === point.place.id) + 1;
   return (
     <>
-      <div className="rank-big" style={{ color: scoreColor(point.mix.score) }}>#{pos}<small>of {n}</small></div>
+      <div className="rank-big" style={{ color: scoreColor(point.mix.score) }}>#{pos}<small>of {fmt(n)}</small></div>
       <div className="rank-track"><i style={{ left: `calc(${(100 * (pos - 1)) / Math.max(1, n - 1)}% - 1px)` }} /></div>
       <div className="seg-key" style={{ marginTop: 9 }}><span>best</span><span style={{ marginLeft: 'auto' }}>worst</span></div>
       <div className="stat-rail" style={{ gridTemplateColumns: 'repeat(2,1fr)' }}>

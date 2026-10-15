@@ -21,7 +21,12 @@ export const addMix = (a: Mix, b: Mix): Mix => {
   return { good, neutral, bad, total, score: scoreOf(good, bad, total), irrelevant: a.irrelevant + b.irrelevant };
 };
 
-export const share = (part: number, whole: number) => (whole ? Math.round((100 * part) / whole) : 0);
+/** A whole percent, or one decimal below 1% so a small share (190 of 63.158) does not read as nothing. */
+export const share = (part: number, whole: number) => {
+  if (!whole) return 0;
+  const pct = (100 * part) / whole;
+  return part && pct < 1 ? Math.max(0.1, Math.round(pct * 10) / 10) : Math.round(pct);
+};
 
 /** One reading of a 0–100 score, shared by every table and marker. */
 export const scoreColor = (score: number | null, scored = true) =>
