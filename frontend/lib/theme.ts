@@ -20,6 +20,8 @@ export const sevColor = (sev: number) => (sev === 4 ? T.sig : sev === 3 ? T.warn
 /** Single-line excerpt with an ellipsis when cut. */
 export const clip = (text: string, n: number) => text.replace(/\n+/g, ' ').slice(0, n) + (text.length > n ? '…' : '');
 export const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+/** A count with Indonesian thousands separators: 1.499, 14.204. */
+export const fmt = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('id-ID'));
 export const pct = (part: number, whole: number) => Math.round((100 * part) / Math.max(1, whole));
 
 /** ISO timestamp as "YYYY-MM-DD HH:mm WIB". */

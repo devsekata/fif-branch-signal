@@ -9,7 +9,7 @@ import { toPoints, type BranchPoint } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
 import { MIN_N, NO_MIX, addMix, readOf, scoreColor, share } from '@/lib/signal';
-import { IRRELEVANT, NEUTRAL, STAR, T, monthLabel, plural, riskColor } from '@/lib/theme';
+import { IRRELEVANT, NEUTRAL, STAR, T, monthLabel, plural, riskColor, fmt } from '@/lib/theme';
 import type { BranchRow, BranchesResponse, SignalBranchesResponse, SignalMonth, SignalOverviewResponse } from '@/lib/types';
 
 /** A league-table row: figures for the current view, beside what Google publishes about the branch. */
@@ -35,7 +35,7 @@ interface Row {
 type RowKey = keyof Row & string;
 
 const COLS: Col<RowKey>[] = [
-  ['branch', 'Branch', false], ['n', 'Read', true], ['coverage', 'Coverage', true], ['avg', 'Rating', true],
+  ['branch', 'Branch', false], ['n', 'Inbound Message', true], ['coverage', 'Coverage', true], ['avg', 'Rating', true],
   ['public_score', 'Public score', true], ['cr', 'Complaint rate', true], ['crit', 'Critical + high', true],
   ['reg', 'Conduct flags', true], ['owner_reply', 'Owner replies', true], ['oldest', 'Oldest open', true],
   ['no_text_pct', 'Rating only', true], ['first_timer_pct', 'New accounts', true], ['risk', 'Risk', true],
@@ -103,7 +103,7 @@ function BranchMetrics({ rows }: { rows: Row[] }) {
       <Metric k="Highest risk" v={worst?.branch ?? '–'} n={`score ${worst?.risk ?? 0} · ${worst?.cr ?? 0}% of reviews are complaints`} />
       <Metric k="Lowest risk" v={best?.branch ?? '–'} n={`score ${best?.risk ?? 0} · use as the coaching benchmark`} />
       <Metric k="Spread in complaint rate" v={spread.toFixed(1) + ' pts'} n="between best and worst branch — this is a management gap, not noise" />
-      <Metric k="Sample coverage" v={total ? ((100 * read) / total).toFixed(1) + '%' : '—'} n={total ? `${read} of ${total} Google reviews read` : `${read} Google reviews read`} />
+      <Metric k="Sample coverage" v={total ? ((100 * read) / total).toFixed(1) + '%' : '—'} n={total ? `${fmt(read)} of ${fmt(total)} Google reviews read` : `${fmt(read)} Google reviews read`} />
     </div>
   );
 }
@@ -128,7 +128,7 @@ function ScopeSummary({ view, points }: { view: View; points: BranchPoint[] }) {
       <div className="grid g-4">
         {([
           ['Area', view.scopeName, `${points.length} ${plural(points.length, 'branch', 'branches')}`],
-          ['Reviews', readOf(mix).toLocaleString('en-US'), `${mix.good} positive · ${mix.neutral} neutral · ${mix.bad} negative · ${mix.irrelevant} irrelevant/spam`],
+          ['Reviews', readOf(mix).toLocaleString('id-ID'), `${fmt(mix.good)} positive · ${fmt(mix.neutral)} neutral · ${fmt(mix.bad)} negative · ${fmt(mix.irrelevant)} irrelevant/spam`],
           ['Sentiment score', scored ? mix.score : '—', scored ? 'scored on the current window' : `under the ${MIN_N}-review minimum`],
           ['Negative share', `${share(mix.bad, readOf(mix))}%`, 'of reviews in this area'],
         ] as const).map(([k, v, n]) => (
@@ -160,7 +160,7 @@ function TopBottom({ view, points }: { view: View; points: BranchPoint[] }) {
                 <td className="n" style={{ width: 30 }}><span className="sub">#{rank(i)}</span></td>
                 <td>
                   <b>{p.place.name}</b>
-                  <div className="sub">{p.place.kecamatan ?? p.place.kota ?? p.place.city} · {readOf(p.mix).toLocaleString('en-US')} reviews</div>
+                  <div className="sub">{p.place.kecamatan ?? p.place.kota ?? p.place.city} · {readOf(p.mix).toLocaleString('id-ID')} reviews</div>
                   <div style={{ marginTop: 5 }}><MixBar mix={p.mix} height={7} /></div>
                 </td>
                 <td className="n" style={{ width: 64 }}>
@@ -250,8 +250,8 @@ function AreaPanel({ view, points }: { view: View; points: BranchPoint[] }) {
               <tr key={b.id} className="clickable" onClick={() => router.push(branchHref(b.id))}>
                 <td><b>{b.name}</b></td>
                 <td>{b.kecamatan ?? b.kota ?? b.city}<div className="sub">{b.province ?? 'not placed'}</div></td>
-                <td className="n">{readOf(mix).toLocaleString('en-US')}</td>
-                <td><MixBar mix={mix} /><div className="sub">{mix.good} / {mix.neutral} / {mix.bad} / {mix.irrelevant}</div></td>
+                <td className="n">{readOf(mix).toLocaleString('id-ID')}</td>
+                <td><MixBar mix={mix} /><div className="sub">{fmt(mix.good)} / {fmt(mix.neutral)} / {fmt(mix.bad)} / {fmt(mix.irrelevant)}</div></td>
                 <td className="n">
                   <b style={{ color: scoreColor(mix.score, enough) }}>{enough ? mix.score : '—'}</b>
                   {!enough && <div className="sub">under {MIN_N}</div>}
@@ -264,7 +264,7 @@ function AreaPanel({ view, points }: { view: View; points: BranchPoint[] }) {
       </div>
       {scored.length > 1 && (
         <AiNote title="What separates the ends of this list">
-          {lo.place.name} scores {lo.mix.score} with {lo.mix.bad} negative out of {lo.mix.total} reviews, against {hi.place.name} at {hi.mix.score}.{' '}
+          {lo.place.name} scores {lo.mix.score} with {fmt(lo.mix.bad)} negative out of {fmt(lo.mix.total)} reviews, against {hi.place.name} at {hi.mix.score}.{' '}
           Across this area {share(total.bad, readOf(total))}% of reviews are negative and {share(total.irrelevant, readOf(total))}% are irrelevant or spam.{' '}
           {lo.mix.total < 40 ? 'The lowest scorer also has thin volume, so treat its position as provisional.' : 'Volumes are comparable, so the gap is about service rather than sample size.'}
         </AiNote>
@@ -297,7 +297,7 @@ function BranchTable({ rows }: { rows: Row[] }) {
             return (
               <tr key={r.branch_id} className="clickable" onClick={() => router.push(branchHref(r.branch_id))}>
                 <td style={{ minWidth: 170 }}><b>{r.branch}</b><div className="sub">{r.where}</div></td>
-                <td className="n">{r.n}{r.universe > 0 && <div className="sub">of {r.universe}</div>}</td>
+                <td className="n">{fmt(r.n)}{r.universe > 0 && <div className="sub">of {fmt(r.universe)}</div>}</td>
                 <td className="n">{r.universe ? r.coverage + '%' : '—'}</td>
                 <td className="n" style={alarm(r.avg !== null && r.avg < 4)}>{r.avg?.toFixed(2) ?? '—'}</td>
                 <td className="n" title="The star average Google shows the public, before this scrape's sampling">{r.public_score?.toFixed(1) ?? '—'}</td>
@@ -353,8 +353,8 @@ function Composition({ rows }: { rows: Row[] }) {
       data: {
         labels: b.map((x) => x.branch),
         datasets: [
-          { label: 'Read', data: b.map((x) => x.n), backgroundColor: T.deep, borderRadius: 4, stack: 'a' },
-          { label: 'Not read', data: b.map((x) => Math.max(0, x.universe - x.n)), backgroundColor: '#D6E5E3', borderRadius: 4, stack: 'a' },
+          { label: 'Inbound Message', data: b.map((x) => x.n), backgroundColor: T.deep, borderRadius: 4, stack: 'a' },
+          { label: 'Not captured', data: b.map((x) => Math.max(0, x.universe - x.n)), backgroundColor: '#D6E5E3', borderRadius: 4, stack: 'a' },
         ],
       },
       options: {

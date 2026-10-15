@@ -7,7 +7,7 @@ import { page, type PageId } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import type { SortState } from '@/lib/scope';
 import type { Mix } from '@/lib/signal';
-import { IRRELEVANT, NEUTRAL, T } from '@/lib/theme';
+import { IRRELEVANT, NEUTRAL, T, fmt } from '@/lib/theme';
 import type { Channel, Priority } from '@/lib/types';
 
 export function Rating({ stars }: { stars: number }) {
@@ -43,7 +43,7 @@ export function Metric({ k, v, n, color, small }: { k: ReactNode; v: ReactNode; 
   return (
     <div className="metric" style={small ? { padding: '11px 13px' } : undefined}>
       <div className="k">{k}</div>
-      <div className="v" style={{ color, fontSize: small ? 22 : undefined }}>{v}</div>
+      <div className="v" style={{ color, fontSize: small ? 22 : undefined }}>{typeof v === 'number' ? fmt(v) : v}</div>
       {n ? <div className="n">{n}</div> : null}
     </div>
   );
@@ -75,7 +75,7 @@ export function MixBar({ mix, height = 9 }: { mix: Mix; height?: number }) {
   const w = (v: number) => `${all ? (100 * v) / all : 0}%`;
   return (
     <div className="sent-bar" style={{ height }} role="img"
-      aria-label={`${mix.good} positive, ${mix.neutral} neutral, ${mix.bad} negative, ${mix.irrelevant} irrelevant or spam of ${all}`}>
+      aria-label={`${fmt(mix.good)} positive, ${fmt(mix.neutral)} neutral, ${fmt(mix.bad)} negative, ${fmt(mix.irrelevant)} irrelevant or spam of ${fmt(all)}`}>
       <i style={{ width: w(mix.good), background: T.grow }} />
       <i style={{ width: w(mix.neutral), background: NEUTRAL }} />
       <i style={{ width: w(mix.bad), background: T.sig }} />
@@ -131,7 +131,7 @@ export function Stat({ k, v, n, bad }: { k: ReactNode; v: ReactNode; n: ReactNod
   return (
     <div className="stat">
       <div className="k">{k}</div>
-      <div className={bad ? 'v sig' : 'v'}>{v}</div>
+      <div className={bad ? 'v sig' : 'v'}>{typeof v === 'number' ? fmt(v) : v}</div>
       <div className="n">{n}</div>
     </div>
   );

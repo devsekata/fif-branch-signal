@@ -23,6 +23,8 @@ function applyTheme() {
   const d = Chart.defaults;
   d.font.family = `${body},system-ui,sans-serif`;
   d.font.size = 11;
+  /* Axis ticks and default tooltips separate thousands the Indonesian way, as the rest of the page does. */
+  d.locale = 'id-ID';
   d.color = '#7C9491';
   d.plugins.tooltip.backgroundColor = '#0B2320';
   d.plugins.tooltip.padding = 10;

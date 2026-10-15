@@ -9,7 +9,7 @@ import { toPoints } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useView, type View } from '@/lib/scope';
 import { praiseInScope, topicRows, type TopicRow } from '@/lib/topics';
-import { IG, T, sevColor } from '@/lib/theme';
+import { IG, T, sevColor, fmt } from '@/lib/theme';
 import type { ComplaintsResponse, SignalBranchesResponse, SignalOverviewResponse } from '@/lib/types';
 
 type Praise = ReturnType<typeof praiseInScope>;
@@ -80,18 +80,18 @@ function ClassificationCard({ view, topics, praise }: { view: View; topics: Topi
   return (
     <div className="panel mb">
       <PanelHead title="Review classification — every category" tag={`${rows.length} categories`} />
-      <div className="p-note">Every tagged category on one axis, with positive, neutral and negative side by side. Neutral categories — questions about promos, requirements, payment channels — are counted in the boxes below rather than on this chart.{sig && sig.mix.irrelevant > 0 ? ` ${sig.mix.irrelevant.toLocaleString('en-US')} irrelevant or spam ${sig.mix.irrelevant === 1 ? 'item is' : 'items are'} set aside and belong to no category.` : ''}</div>
+      <div className="p-note">Every tagged category on one axis, with positive, neutral and negative side by side. Neutral categories — questions about promos, requirements, payment channels — are counted in the boxes below rather than on this chart.{sig && sig.mix.irrelevant > 0 ? ` ${sig.mix.irrelevant.toLocaleString('id-ID')} irrelevant or spam ${sig.mix.irrelevant === 1 ? 'item is' : 'items are'} set aside and belong to no category.` : ''}</div>
       {rows.length ? <ChartBox config={config} /> : <div className="empty-note">Nothing tagged in this view.</div>}
       <div className="split-row">
         <div className="sp">
-          <div className="k">Neutral — a question</div><div className="v">{questions != null ? questions.toLocaleString('en-US') : '—'}</div>
+          <div className="k">Neutral — a question</div><div className="v">{questions != null ? questions.toLocaleString('id-ID') : '—'}</div>
           <div className="n">Text with no verdict in it. Someone wants an answer, not an apology.{' '}
             {questions != null
               ? `Read as a question by the relevance classifier${worded ? `; ${worded} more neutral ${worded === 1 ? 'item carries' : 'items carry'} text it did not call one` : ''}.`
               : `The API does not classify questions yet; ${worded} neutral ${worded === 1 ? 'item carries' : 'items carry'} text and may be one.`}</div>
         </div>
         <div className="sp">
-          <div className="k">Neutral — rating only</div><div className="v">{sig ? wordless.toLocaleString('en-US') : '…'}</div>
+          <div className="k">Neutral — rating only</div><div className="v">{sig ? wordless.toLocaleString('id-ID') : '…'}</div>
           <div className="n">A star with no words. A tap, not an opinion — which is why it is not counted as praise.</div>
         </div>
         <div className="sp hint">
@@ -260,7 +260,7 @@ function Exclusive({ rows }: { rows: TopicRow[] }) {
                 <td><span className={`tag s${r.sev}`}>{r.sev}</span> {r.label}</td>
                 <td className="n">{r.g || '—'}</td>
                 <td className="n">{r.s || '—'}</td>
-                <td className="n" title={r.answered === null ? undefined : `${r.answered} of ${total} carry a public reply`}>
+                <td className="n" title={r.answered === null ? undefined : `${fmt(r.answered)} of ${fmt(total)} carry a public reply`}>
                   {r.answered ?? '—'}
                   {r.answered !== null && <span className="sub" style={{ display: 'inline', marginLeft: 4 }}>{total ? ((100 * r.answered) / total).toFixed(0) : 0}%</span>}
                 </td>
@@ -321,7 +321,7 @@ function Language({ view, praise, terms: negative, positiveTerms }: {
             {terms.map((x) => {
               const t = (x.n - min) / Math.max(1, max - min);
               const color = positive ? (t > 0.66 ? T.deep : t > 0.33 ? '#2F8E86' : '#7FB8AE') : (t > 0.66 ? T.sig : t > 0.33 ? '#C96B64' : '#DFA9A5');
-              return <span key={x.w} style={{ fontSize: 13 + t * 19, color }} title={`${x.n} mentions`}>{x.w}</span>;
+              return <span key={x.w} style={{ fontSize: 13 + t * 19, color }} title={`${fmt(x.n)} mentions`}>{x.w}</span>;
             })}
           </div>
           <div style={{ marginTop: 14 }}><ChartBox config={config} size="sm" /></div>
@@ -349,7 +349,7 @@ function Praised({ view }: { view: View }) {
           <tr key={p.place.id} className="clickable" onClick={() => router.push(branchHref(p.place.id))}>
             <td className="n" style={{ width: 30 }}><span className="sub">#{i + 1}</span></td>
             <td><b>{p.place.name}</b><div className="sub">{p.place.kecamatan ?? p.place.kota ?? p.place.city}</div></td>
-            <td className="n" style={{ width: 70 }}>{p.mix.good.toLocaleString('en-US')}<div className="sub">positive</div></td>
+            <td className="n" style={{ width: 70 }}>{p.mix.good.toLocaleString('id-ID')}<div className="sub">positive</div></td>
             <td className="n" style={{ width: 56 }}><b style={{ color: T.grow }}>{p.share}%</b></td>
           </tr>
         ))}

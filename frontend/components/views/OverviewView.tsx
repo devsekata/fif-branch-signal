@@ -13,7 +13,7 @@ import { useReference } from '@/lib/reference';
 import { praiseInScope, topicRows, type PraiseDrivers } from '@/lib/topics';
 import { LEVEL_LABEL, pickScope, useView, type View } from '@/lib/scope';
 import { MIN_N, readOf, share, type Mix } from '@/lib/signal';
-import { IG, IRRELEVANT, NEUTRAL, PRI, T, clip, monthLabel, plural, riskColor, sevColor } from '@/lib/theme';
+import { IG, IRRELEVANT, NEUTRAL, PRI, T, clip, monthLabel, plural, riskColor, sevColor, fmt } from '@/lib/theme';
 import type { CasesResponse, ComplaintsResponse, SignalBranchesResponse, SignalOverviewResponse } from '@/lib/types';
 
 type Sig = SignalOverviewResponse;
@@ -23,7 +23,8 @@ export function OverviewView() {
   const sig = useApi<Sig>('/v1/signal/overview', view.sig);
   /* Branch rows exist for Google only; there is nothing to ask for while the view is Instagram alone. */
   const branches = useApi<SignalBranchesResponse>(view.useG ? '/v1/signal/branches' : null, { ...view.sig, source: undefined });
-  const complaints = useApi<ComplaintsResponse>('/v1/pages/complaints', view.params).data;
+  const complaintsRes = useApi<ComplaintsResponse>('/v1/pages/complaints', view.params);
+  const complaints = complaintsRes.data;
   return (
     <ApiPage res={sig}>
       {(d) => (
@@ -34,7 +35,7 @@ export function OverviewView() {
           </div>
 
           <div className="grid g-2 mb">
-            <Themes view={view} payload={complaints} />
+            <Themes view={view} res={complaintsRes} />
             <BestWorst view={view} res={branches} />
           </div>
 
@@ -67,8 +68,8 @@ function useWhere(view: View) {
   const n = useReference().places.length;
   return view.src === 'instagram' ? 'on the official Instagram account'
     : view.isSet ? `in ${view.scopeName}`
-    : view.src === 'google' ? `across ${n} ${plural(n, 'branch', 'branches')}`
-    : `across ${n} ${plural(n, 'branch', 'branches')} and the Instagram account`;
+    : view.src === 'google' ? `across ${fmt(n)} ${plural(n, 'branch', 'branches')}`
+    : `across ${fmt(n)} ${plural(n, 'branch', 'branches')} and the Instagram account`;
 }
 
 /* The relevance classifier's own reason codes, in words. An unknown code is shown as it comes. */
@@ -79,7 +80,7 @@ const REASON: Record<string, string> = {
 
 function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n: number }[] }) {
   /* The three largest reasons say what the category is made of; the rest is a tail of a few items. */
-  const reasons = (why ?? []).slice(0, 3).map((r) => `${r.n.toLocaleString('en-US')} ${REASON[r.reason] ?? r.reason.replace(/_/g, ' ')}`).join(' · ');
+  const reasons = (why ?? []).slice(0, 3).map((r) => `${r.n.toLocaleString('id-ID')} ${REASON[r.reason] ?? r.reason.replace(/_/g, ' ')}`).join(' · ');
   /* Shares are of everything read, so the four categories add up to 100. The score is on the three that are opinions. */
   const all = readOf(m);
   const where = useWhere(view);
@@ -94,15 +95,15 @@ function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n:
           <>
             {m.score !== null && <><em style={{ color: m.score >= 55 ? 'var(--grow)' : 'var(--sig)' }}>{verdict}</em> {where} —{' '}</>}
             {share(m.good, all)}% positive, {share(m.neutral, all)}% neutral, {share(m.bad, all)}% negative, {share(m.irrelevant, all)}% irrelevant/spam{' '}
-            across {all.toLocaleString('en-US')} reviews and comments read.
+            across {all.toLocaleString('id-ID')} reviews and comments read.
           </>
         ) : 'Nothing read in this view.'}
       </div>
       <div className="stat-rail" style={{ borderTop: 'none', paddingTop: 0 }}>
         <Stat k="Sentiment score" v={m.score ?? '—'} n="(positive − negative) ÷ total, irrelevant/spam left out" bad={m.score !== null && m.score < 55} />
-        <Stat k="Read" v={all.toLocaleString('en-US')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
-        <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={reasons || `${m.irrelevant.toLocaleString('en-US')} set aside by the relevance check`} />
-        <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('en-US')} reviews and comments`} bad={share(m.bad, all) > 15} />
+        <Stat k="Inbound Message" v={all.toLocaleString('id-ID')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
+        <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={reasons || `${m.irrelevant.toLocaleString('id-ID')} set aside by the relevance check`} />
+        <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('id-ID')} reviews and comments`} bad={share(m.bad, all) > 15} />
       </div>
       <div style={{ borderTop: '1px solid var(--rule-2)', marginTop: 18, paddingTop: 14 }}>
         <MixDonut m={m} />
@@ -127,12 +128,12 @@ function MixDonut({ m }: { m: Mix }) {
             labels: {
               padding: 12, font: { size: 11.5 },
               generateLabels: (ch) => (ch.data.labels as string[]).map((l, i) => ({
-                text: `${l} — ${data[i].toLocaleString('en-US')} (${share(data[i], all)}%)`,
+                text: `${l} — ${data[i].toLocaleString('id-ID')} (${share(data[i], all)}%)`,
                 fillStyle: colors[i], strokeStyle: colors[i], lineWidth: 0, pointStyle: 'circle' as const, index: i,
               })),
             },
           },
-          tooltip: { callbacks: { label: (c) => `${c.parsed.toLocaleString('en-US')} of ${all.toLocaleString('en-US')} (${share(c.parsed, all)}%)` } },
+          tooltip: { callbacks: { label: (c) => `${c.parsed.toLocaleString('id-ID')} of ${all.toLocaleString('id-ID')} (${share(c.parsed, all)}%)` } },
         },
       },
     };
@@ -152,10 +153,10 @@ function Decision({ view, d: sig }: { view: View; d: Sig }) {
   const present = Object.entries(d.counts).filter(([, v]) => v);
   return (
     <div className="panel">
-      <PanelHead title="What needs a decision" tag={`${d.unanswered} unanswered`} />
+      <PanelHead title="What needs a decision" tag={`${fmt(d.unanswered)} unanswered`} />
       <div className="p-note">
         {d.open
-          ? `${d.open} open ${plural(d.open, 'case', 'cases')} ${where}. ${d.reg} ${plural(d.reg, 'describes', 'describe')} collection conduct, misappropriation or exposed personal data.`
+          ? `${fmt(d.open)} open ${plural(d.open, 'case', 'cases')} ${where}. ${fmt(d.reg)} ${plural(d.reg, 'describes', 'describe')} collection conduct, misappropriation or exposed personal data.`
           : 'No open case in this view.'}
       </div>
       <div className="grid g-2" style={{ gap: 10 }}>
@@ -202,7 +203,8 @@ const THEME_NOTE: Record<ThemeMode, string> = {
   neutral: 'Questions, not verdicts. These need an answer rather than an apology — and almost all of them arrive in comments, not reviews.',
 };
 
-function Themes({ view, payload }: { view: View; payload: ComplaintsResponse | undefined }) {
+function Themes({ view, res }: { view: View; res: ApiResult<ComplaintsResponse> }) {
+  const payload = res.data;
   const [mode, setMode] = useState<ThemeMode>('negative');
   const topics = useMemo(() => topicRows(payload, view), [payload, view]);
   const praise = payload?.praise_drivers;
@@ -212,15 +214,20 @@ function Themes({ view, payload }: { view: View; payload: ComplaintsResponse | u
     ? praiseInScope(praise, view).map((p) => ({ label: p.label, n: p.n, color: T.grow, sub: 'positive mentions' }))
     /* Questions are counted for the whole selection: the API has no per-branch split of them. */
     : (payload?.neutral_topics ?? []).filter((t) => t.google + t.instagram > 0)
-      .map((t) => ({ label: t.label, n: t.google + t.instagram, color: T.ink3, sub: 'questions' + (t.instagram ? ` · ${t.google} Google, ${t.instagram} Instagram` : '') }));
+      .map((t) => ({ label: t.label, n: t.google + t.instagram, color: T.ink3, sub: 'questions' + (t.instagram ? ` · ${fmt(t.google)} Google, ${fmt(t.instagram)} Instagram` : '') }));
   const top = [...rows].sort((x, y) => y.n - x.n).slice(0, 4);
   const tot = top.reduce((a, r) => a + r.n, 0);
   return (
     <div className="panel">
-      <PanelHead title="What they are talking about" tag={tot ? `${tot} mentions` : undefined} />
+      <PanelHead title="What they are talking about" tag={tot ? `${fmt(tot)} mentions` : undefined} />
       <div className="p-note">{THEME_NOTE[mode]}</div>
       <Chips options={THEME_MODES} value={mode} onPick={setMode} />
-      {mode === 'neutral' && !top.length ? (
+      {/* The topic payload is the slowest on the page; until it lands, or when it fails, say so rather than reading as empty. */}
+      {!payload && res.error ? (
+        <div className="empty-note">Topics could not be loaded. {res.error} <button className="btn" onClick={res.retry}>Try again</button></div>
+      ) : !payload ? (
+        <div className="empty-note">Loading topics…</div>
+      ) : mode === 'neutral' && !top.length ? (
         <Pending>Question topics are in the taxonomy, but nothing in this view has been read as a question on one of them. Only promo, requirements and payment-channel questions are told apart so far.</Pending>
       ) : top.length ? top.map((r) => (
         <div key={r.label} className="theme-row" style={{ cursor: 'default' }}>
@@ -230,7 +237,7 @@ function Themes({ view, payload }: { view: View; payload: ComplaintsResponse | u
             <div className="track"><i style={{ width: `${tot ? (100 * r.n) / tot : 0}%`, background: r.color }} /></div>
           </span>
           <span className="cnt" style={{ color: r.color }}>
-            {r.n}
+            {fmt(r.n)}
             <div className="sub" style={{ fontFamily: 'var(--font-jakarta)', fontWeight: 400 }}>{share(r.n, tot)}%</div>
           </span>
         </div>
@@ -281,7 +288,7 @@ function BestWorst({ view, res }: { view: View; res: ApiResult<SignalBranchesRes
         tooltip: {
           callbacks: {
             label: (c) => `score ${c.parsed.x}`,
-            afterBody: (c) => { const m = picked[c[0].dataIndex].mix; return `${readOf(m).toLocaleString('en-US')} reviews — ${m.good} positive, ${m.neutral} neutral, ${m.bad} negative, ${m.irrelevant} irrelevant/spam`; },
+            afterBody: (c) => { const m = picked[c[0].dataIndex].mix; return `${readOf(m).toLocaleString('id-ID')} reviews — ${fmt(m.good)} positive, ${fmt(m.neutral)} neutral, ${fmt(m.bad)} negative, ${fmt(m.irrelevant)} irrelevant/spam`; },
           },
         },
       },
@@ -501,7 +508,7 @@ function Channels({ view, d, praise }: { view: View; d: Sig; praise: PraiseDrive
       <div className="p-note" style={{ marginBottom: 8 }}>Two channels, one severity ladder. Instagram carries fewer cases but a heavier mix.</div>
       {g.complaints + s.complaints ? <ChartBox config={negative} /> : <div className="empty-note">No complaints in this view.</div>}
       <div className="p-note" style={{ margin: '10px 0 0' }}>
-        {g.complaints} complaints read from Google against {s.complaints} from Instagram.{' '}
+        {fmt(g.complaints)} complaints read from Google against {fmt(s.complaints)} from Instagram.{' '}
         {sev4(s)}% of the Instagram cases sit at the conduct and regulatory level, against {sev4(g)}% on Google.{' '}
         People bring the serious accusations to the brand&apos;s own feed, where everyone can see them.
       </div>
@@ -510,7 +517,7 @@ function Channels({ view, d, praise }: { view: View; d: Sig; praise: PraiseDrive
         <div className="p-note" style={{ marginBottom: 8 }}>Same axis, one series per channel. Categories that sit on only one channel are the point, not a gap.</div>
         {gPositive + sPositive ? <ChartBox config={positive} /> : <div className="empty-note">Nothing positive read in this view.</div>}
         <div className="p-note" style={{ margin: '10px 0 0' }}>
-          {gPositive.toLocaleString('en-US')} positive reviews on Google against {sPositive} positive comments on Instagram.{' '}
+          {gPositive.toLocaleString('id-ID')} positive reviews on Google against {sPositive} positive comments on Instagram.{' '}
           {cats[0] ? `On Google people name the service — ${cats[0].label} leads with ${cats[0].n} mentions. ` : ''}
           Praise categories are tagged on Google text only, so Instagram praise is counted but not broken down. Counting the two together would turn content engagement into customer satisfaction.
         </div>

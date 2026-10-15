@@ -12,7 +12,7 @@ import { currentOf, useView } from '@/lib/scope';
 import { dupUsers, readSocial } from '@/lib/social';
 import { ImageAnalysis } from '@/components/views/ImageAnalysis';
 import { PostSentiments } from '@/components/views/PostSentiments';
-import { T, plural, sevColor } from '@/lib/theme';
+import { T, plural, sevColor, fmt } from '@/lib/theme';
 import type { IntegrityResponse, SocialResponse, SocialThread } from '@/lib/types';
 
 type SocFilter = 'all' | 'critical' | 'high' | 'medium' | 'unanswered';
@@ -75,9 +75,9 @@ export function SocialView() {
               </div>
             )}
             <div className="grid g-4 mb">
-              <Metric k="Threads" v={S.threads} n={`${S.root_comments} comments, ${S.replies_captured} replies read`} />
+              <Metric k="Threads" v={S.threads} n={`${fmt(S.root_comments)} comments, ${fmt(S.replies_captured)} replies read`} />
               <Metric k="Complaint threads" v={S.complaint_threads} n={`${S.conduct_level} at conduct and regulatory level · ${S.pile_ons} ${plural(S.pile_ons, 'pile-on', 'pile-ons')}`} />
-              <Metric k="Answered by the brand" v={S.brand_reply_rate_pct + '%'} n={`${S.unanswered} complaints never got a public reply`} />
+              <Metric k="Answered by the brand" v={S.brand_reply_rate_pct + '%'} n={`${fmt(S.unanswered)} complaints never got a public reply`} />
               <Metric k="Median first response" v={S.median_first_response_h != null ? S.median_first_response_h + 'h' : '—'}
                 n={S.max_first_response_h != null ? `slowest answer took ${Math.round(S.max_first_response_h / 24)} days` : 'no brand answers yet'} />
             </div>
@@ -105,9 +105,9 @@ export function SocialView() {
                 <div className="panel">
                   <PanelHead title="Capture quality" />
                   <div className="p-note">
-                    The scraper read <b>{S.replies_captured} of {S.replies_declared} declared replies</b>, and cut {S.truncated_threads} threads short.{' '}
+                    The scraper read <b>{fmt(S.replies_captured)} of {fmt(S.replies_declared)} declared replies</b>, and cut {fmt(S.truncated_threads)} threads short.{' '}
                     It also returned {S.reattached_brand_replies} brand {plural(S.reattached_brand_replies, 'answer', 'answers')} as a top-level comment because the text opens with a mention; the pipeline reattaches those, otherwise the reply rate reads lower than it is.{' '}
-                    {ig?.posts != null && <>Everything here comes from <b>{ig.posts} {plural(ig.posts, 'post', 'posts')}</b> — enough to prove the model, not enough to trend.</>}
+                    {ig?.posts != null && <>Everything here comes from <b>{fmt(ig.posts)} {plural(ig.posts, 'post', 'posts')}</b> — enough to prove the model, not enough to trend.</>}
                   </div>
                 </div>
               </div>
@@ -152,7 +152,7 @@ function DataAlert({ threads, params }: { threads: SocialThread[]; params: Param
             which is a coordinated posting pattern rather than an individual complaint.{' '}
           </>
         ) : null}
-        {answered ? `${answered} of them ${plural(answered, 'has', 'have')} a brand reply. ` : 'None has been answered or removed. '}
+        {answered ? `${fmt(answered)} of them ${plural(answered, 'has', 'have')} a brand reply. ` : 'None has been answered or removed. '}
         This is a moderation and legal matter before it is a customer experience one: the exposure risk under UU PDP belongs to FIF as the account owner, not to whoever wrote the comment.{' '}
         Phone numbers, ID numbers and dates of birth are masked in this dashboard at ingestion — a tool that flags a data leak should not reproduce it.
       </p>

@@ -12,7 +12,7 @@ import { branchHref } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import { pickScope, useView, type AreaLevel, type View } from '@/lib/scope';
 import { MIN_N, NO_MIX, addMix, readOf, scoreColor, share } from '@/lib/signal';
-import { IRRELEVANT, NEUTRAL, T, plural } from '@/lib/theme';
+import { IRRELEVANT, NEUTRAL, T, plural, fmt } from '@/lib/theme';
 import type { SignalBranchesResponse } from '@/lib/types';
 
 const GeoMap = dynamic(() => import('@/components/GeoMap'), {
@@ -258,10 +258,10 @@ function GeoMetrics({ areas, points }: { areas: Area[]; points: BranchPoint[] })
   const worst = areas.filter((a) => a.enough).sort((a, b) => a.mix.score! - b.mix.score!)[0];
   return (
     <div className="grid g-4 mb">
-      <Metric k="Areas in view" v={areas.length} n={`${points.length} branches, ${readOf(mix).toLocaleString('en-US')} reviews`} />
+      <Metric k="Areas in view" v={areas.length} n={`${points.length} branches, ${readOf(mix).toLocaleString('id-ID')} reviews`} />
       <Metric k="Sentiment score" v={mix.score ?? '—'} n="across everything in this view" />
-      <Metric k="Positive / negative" v={`${mix.good.toLocaleString('en-US')} / ${mix.bad.toLocaleString('en-US')}`} n={`${share(mix.bad, readOf(mix))}% negative, ${share(mix.irrelevant, readOf(mix))}% irrelevant/spam`} />
-      <Metric k="Lowest scoring" v={worst?.name ?? '—'} n={worst ? `score ${worst.mix.score}, ${worst.mix.bad} negative reviews` : 'nothing scored yet'} />
+      <Metric k="Positive / negative" v={`${mix.good.toLocaleString('id-ID')} / ${mix.bad.toLocaleString('id-ID')}`} n={`${share(mix.bad, readOf(mix))}% negative, ${share(mix.irrelevant, readOf(mix))}% irrelevant/spam`} />
+      <Metric k="Lowest scoring" v={worst?.name ?? '—'} n={worst ? `score ${worst.mix.score}, ${fmt(worst.mix.bad)} negative reviews` : 'nothing scored yet'} />
     </div>
   );
 }
@@ -314,7 +314,7 @@ function MapNote({ areas, level }: { areas: Area[]; level: AreaLevel }) {
   const gap = Math.round((best.mix.score! - worst.mix.score!) * 10) / 10;
   return (
     <AiNote title="What this map shows">
-      {worst.name} sits lowest at {worst.mix.score}, with {worst.mix.bad} negative reviews out of {worst.mix.total}.{' '}
+      {worst.name} sits lowest at {worst.mix.score}, with {fmt(worst.mix.bad)} negative reviews out of {fmt(worst.mix.total)}.{' '}
       {scored.length > 1 && <>
         {best.name} sits highest at {best.mix.score}. The spread between the best and worst {level} is {gap} points,{' '}
         {gap > 20 ? 'wide enough that this is a management difference rather than noise' : 'narrow enough that no single area stands out yet'}.{' '}
@@ -376,13 +376,13 @@ function SeverityChart({ points }: { points: BranchPoint[] }) {
         tooltip: {
           callbacks: {
             title: (c) => (c[0].raw as typeof pts[number]).p.place.name,
-            label: (c) => { const r = c.raw as typeof pts[number]; return `${r.x} reviews · ${r.y}% negative · ${r.p.mix.bad} negative`; },
+            label: (c) => { const r = c.raw as typeof pts[number]; return `${fmt(r.x)} reviews · ${r.y}% negative · ${fmt(r.p.mix.bad)} negative`; },
             afterLabel: (c) => { const r = c.raw as typeof pts[number]; return r.p.enough ? `score ${r.p.mix.score}` : 'not scored'; },
           },
         },
       },
       scales: {
-        x: { ...AXIS, beginAtZero: true, title: { display: true, text: 'reviews read' } },
+        x: { ...AXIS, beginAtZero: true, title: { display: true, text: 'inbound messages' } },
         y: { ...AXIS, beginAtZero: true, title: { display: true, text: '% negative' } },
       },
     },
@@ -418,9 +418,9 @@ function RankTable({ areas, level, onPick }: { areas: Area[]; level: AreaLevel; 
           {rows.length ? rows.map((a) => (
             <tr key={a.name} className="clickable" onClick={() => onPick(a.name)}>
               <td><b>{a.name}</b><div className="sub">{level === 'kecamatan' ? 'click to open its branches' : 'click to drill in'}</div></td>
-              <td className="n">{a.branches}</td>
-              <td className="n">{readOf(a.mix).toLocaleString('en-US')}</td>
-              <td><MixBar mix={a.mix} /><div className="sub">{a.mix.good} / {a.mix.neutral} / {a.mix.bad} / {a.mix.irrelevant}</div></td>
+              <td className="n">{fmt(a.branches)}</td>
+              <td className="n">{readOf(a.mix).toLocaleString('id-ID')}</td>
+              <td><MixBar mix={a.mix} /><div className="sub">{fmt(a.mix.good)} / {fmt(a.mix.neutral)} / {fmt(a.mix.bad)} / {fmt(a.mix.irrelevant)}</div></td>
               <td className="n">
                 <b style={{ color: scoreColor(a.mix.score, a.enough) }}>{a.enough ? a.mix.score : '—'}</b>
                 {!a.enough && <div className="sub">under {MIN_N}</div>}
@@ -450,9 +450,9 @@ function PlacedTable({ points }: { points: BranchPoint[] }) {
               <td>{b.kecamatan ?? <span style={{ color: 'var(--ink-3)' }}>not placed</span>}{b.kecamatan && <div className="sub">{[b.kota, b.province].filter(Boolean).join(', ')}</div>}</td>
               <td className="n">{readOf(mix)}</td>
               <td className="n"><b style={{ color: scoreColor(mix.score, enough) }}>{enough ? mix.score : '—'}</b></td>
-              <td className="n">{mix.bad}</td>
+              <td className="n">{fmt(mix.bad)}</td>
               <td className="n">{mix.irrelevant || '—'}</td>
-              <td className="n">{unanswered}</td>
+              <td className="n">{fmt(unanswered)}</td>
             </tr>
           )) : <EmptyRow colSpan={8}>No branch in this scope.</EmptyRow>}
         </tbody>

@@ -9,7 +9,7 @@ import { slaLabel, toRow, type CaseRow } from '@/lib/caseRow';
 import { useCase } from '@/lib/caseStore';
 import { useReference } from '@/lib/reference';
 import { nextSort, sortRows, useView, type SortState } from '@/lib/scope';
-import { T, plural } from '@/lib/theme';
+import { T, plural, fmt } from '@/lib/theme';
 
 type QueueKey = keyof CaseRow & string;
 type QueueFilter = 'all' | 'critical' | 'high' | 'medium';
@@ -71,7 +71,7 @@ function Queue({ list }: { list: CaseList }) {
       </div>
       {list.partial && (
         <div className="p-note" style={{ marginBottom: 6, color: '#8E5310' }}>
-          Showing the {list.items.length.toLocaleString('en-US')} most critical of {list.total.toLocaleString('en-US')} cases. Narrow the scope or the period to reach the rest.
+          Showing the {list.items.length.toLocaleString('id-ID')} most critical of {list.total.toLocaleString('id-ID')} cases. Narrow the scope or the period to reach the rest.
         </div>
       )}
       <div className="p-note" style={{ marginBottom: 12 }}>Criticality runs 0–100: topic severity weighted fifteen-fold, then rating severity, recency, reviewer reach (Local Guide status, lifetime review count, attached photo) and an unanswered penalty. Weights are configurable and need CX and compliance sign-off before this goes live.</div>
@@ -80,7 +80,7 @@ function Queue({ list }: { list: CaseList }) {
           {all.length} open {plural(all.length, 'case', 'cases')}, {counts.critical} critical.{' '}
           {top ? `${topic(top[0])?.label ?? top[0]} is the most common theme, on ${top[1]} of them. ` : ''}
           {stale
-            ? `${stale} ${plural(stale, 'has', 'have')} been public and unanswered for more than six months — those are the ones that read as neglect rather than error.`
+            ? `${fmt(stale)} ${plural(stale, 'has', 'have')} been public and unanswered for more than six months — those are the ones that read as neglect rather than error.`
             : 'Nothing has been sitting unanswered beyond six months.'}
         </AiNote>
       )}

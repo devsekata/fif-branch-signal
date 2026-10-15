@@ -16,7 +16,7 @@ const STATUS_LABEL: Record<ListingStatus, string> = { matched: 'Matched', duplic
 /** Rows drawn at once; the rest is reached by narrowing the scope or searching. */
 const CAP = 100;
 
-const n = (v: number) => v.toLocaleString('en-US');
+const n = (v: number) => v.toLocaleString('id-ID');
 
 export function ListingsView() {
   const view = useView('listings');

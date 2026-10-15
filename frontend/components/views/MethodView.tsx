@@ -3,7 +3,7 @@
 import { PanelHead } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { useReference } from '@/lib/reference';
-import { plural } from '@/lib/theme';
+import { plural, fmt } from '@/lib/theme';
 import type { AccuracyBand, ClassifierAccuracy, ComplaintsResponse, ConfigResponse, SocialResponse } from '@/lib/types';
 
 /** Fallback wording per level when the config ladder carries no description. */
@@ -68,8 +68,8 @@ export function MethodView() {
   };
 
   const limits = [
-    [ig?.posts != null ? `${ig.posts} ${plural(ig.posts, 'post', 'posts')} in the scrape` : 'Posts in the scrape', 'No post-level comparison and no reliable trend. A multi-post pull is the next step.'],
-    [social ? `${social.replies_captured} of ${social.replies_declared} replies captured` : 'Replies captured',
+    [ig?.posts != null ? `${fmt(ig.posts)} ${plural(ig.posts, 'post', 'posts')} in the scrape` : 'Posts in the scrape', 'No post-level comparison and no reliable trend. A multi-post pull is the next step.'],
+    [social ? `${fmt(social.replies_captured)} of ${fmt(social.replies_declared)} replies captured` : 'Replies captured',
       'The actor truncates long reply chains, and the biggest thread is always the one most affected. Raise the reply limit before the next run.'],
     ['No branch in the data', 'Social complaints name people and processes, not offices. Social is scored on its own dimension and only meets the branch data inside the queue.'],
     ['Brand replies arrive as root comments', 'Instagram returns an answer opening with a mention as a top-level comment. Left uncorrected it understates the reply rate; the pipeline reattaches them by handle.'],
@@ -84,7 +84,7 @@ export function MethodView() {
           <div className="callout">
             <h4>It runs on a partial scrape</h4>
             <p>
-              {google ? `${google.rows} of ${google.universe ?? '—'} Google reviews were read, ${google.coverage_pct ?? '—'}% overall, and the rate differs per branch. ` : ''}
+              {google ? `${fmt(google.rows)} of ${fmt(google.universe)} Google reviews were read, ${google.coverage_pct ?? '—'}% overall, and the rate differs per branch. ` : ''}
               Absolute volumes are therefore indicative only, and every comparison in this build uses rates.
             </p>
           </div>
@@ -207,7 +207,7 @@ export function MethodView() {
             Taxonomy {meta.versions.taxonomy} · scoring {meta.versions.scoring} · classifier {meta.versions.classifier}.{' '}
             Data as of {meta.as_of.slice(0, 16).replace('T', ' ')} UTC, generated {meta.generated_at.slice(0, 16).replace('T', ' ')} UTC
             {meta.date_bounds ? `, covering ${meta.date_bounds.min} to ${meta.date_bounds.max}` : ''}.{' '}
-            {meta.sources.map((s) => `${s.label}: ${s.rows} rows, ${s.status}`).join(' · ')}.
+            {meta.sources.map((s) => `${s.label}: ${fmt(s.rows)} rows, ${s.status}`).join(' · ')}.
           </div>
         )}
       </div>
@@ -230,7 +230,7 @@ function Accuracy({ a }: { a: ClassifierAccuracy | null | undefined }) {
           {rows.map(([label, b]) => (
             <tr key={label}>
               <td><b>{label}</b></td>
-              <td className="n mono">{b.n}</td><td className="n mono">{pct(b.precision)}</td><td className="n mono">{pct(b.recall)}</td><td className="n mono">{pct(b.f1)}</td>
+              <td className="n mono">{fmt(b.n)}</td><td className="n mono">{pct(b.precision)}</td><td className="n mono">{pct(b.recall)}</td><td className="n mono">{pct(b.f1)}</td>
             </tr>
           ))}
         </tbody>
