@@ -4,7 +4,10 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
 import { AiNote, ApiPage, Bridge, Chips, EmptyRow, Formula, Metric, MixBar, PanelHead, SortHead, type Col } from '@/components/ui';
+import { RatingTreemap } from '@/components/RatingTreemap';
 import { useApi } from '@/lib/api';
+import { PRIOR_MIN_N, adjustedRate, estimateM, priorOf, riskOf, type MEstimate } from '@/lib/riskShrink';
+import { useSession } from '@/lib/session';
 import { toPoints, type BranchPoint } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
@@ -19,6 +22,8 @@ interface Row {
   where: string;
   n: number;
   avg: number | null;
+  /** Complaints, for the developer's risk comparison. */
+  c: number;
   cr: number;
   crit: number;
   reg: number;
@@ -31,6 +36,10 @@ interface Row {
   coverage: number;
   public_score: number | null;
   owner_reply: number | null;
+  /* The proposed formula beside the live one; zero unless the developer comparison is on. */
+  cr_adj: number;
+  risk_new: number;
+  risk_delta: number;
 }
 type RowKey = keyof Row & string;
 
@@ -40,6 +49,15 @@ const COLS: Col<RowKey>[] = [
   ['reg', 'Conduct flags', true], ['owner_reply', 'Owner replies', true], ['oldest', 'Oldest open', true],
   ['no_text_pct', 'Rating only', true], ['first_timer_pct', 'New accounts', true], ['risk', 'Risk', true],
 ];
+
+/* The comparison adds the shrunk rate beside the raw one and the proposed score beside the live one. */
+const COMPARE_COLS: Col<RowKey>[] = COLS.flatMap((c): Col<RowKey>[] =>
+  c[0] === 'cr' ? [c, ['cr_adj', 'Rate adj', true]]
+    : c[0] === 'risk' ? [['risk', 'Risk (current)', true], ['risk_new', 'Risk (proposed)', true], ['risk_delta', 'Δ', true]]
+      : [c]);
+
+/** Shrinkage inputs for the developer comparison, all from the data: m over the full range, p over the period. */
+interface Shrink { full: MEstimate; period: MEstimate; m: number | null; p: number; fallback: boolean }
 
 const alarm = (on: boolean | number) => (on ? { color: T.sig, fontWeight: 600 } : undefined);
 
@@ -54,6 +72,18 @@ export function BranchesView() {
 
 function Branches({ view, data, trend, published }: { view: View; data: SignalBranchesResponse; trend: SignalMonth[] | undefined; published: BranchRow[] | undefined }) {
   const points = useMemo(() => toPoints(data), [data]);
+  const developer = !!useSession()?.developer;
+  const [comparing, setComparing] = useState(false);
+  const compare = developer && comparing;
+  /* Every branch, unscoped: the period sets p, the full range sets m (and p when the period is too thin). */
+  const period = useApi<SignalBranchesResponse>(compare ? '/v1/signal/branches' : null, { from: view.sig.from }).data;
+  const full = useApi<SignalBranchesResponse>(compare ? '/v1/signal/branches' : null).data;
+  const shrink = useMemo((): Shrink | null => {
+    if (!period || !full) return null;
+    const inputs = (d: SignalBranchesResponse) => d.branches.map((b) => ({ n: b.reviews_read, c: b.complaints }));
+    const f = estimateM(inputs(full)), pe = estimateM(inputs(period));
+    return { full: f, period: pe, m: f.m === null ? null : Math.round(f.m * 10) / 10, ...priorOf(pe, f) };
+  }, [period, full]);
   const rows = useMemo((): Row[] => {
     const pub = new Map((published ?? []).map((r) => [r.branch_id, r]));
     /* Branches with nothing read in this view are dropped from the league table rather than shown at zero. */
@@ -62,13 +92,23 @@ function Branches({ view, data, trend, published }: { view: View; data: SignalBr
       const universe = b.reviews_universe ?? g?.reviews_universe ?? 0;
       return {
         branch_id: b.branch_id, branch: b.branch, where: [b.kecamatan ?? b.city, b.province].filter(Boolean).join(', '),
-        n: b.reviews_read, avg: b.avg_rating, cr: b.complaint_rate_pct, crit: b.critical_high, reg: b.conduct_flags,
+        n: b.reviews_read, avg: b.avg_rating, c: b.complaints, cr: b.complaint_rate_pct, crit: b.critical_high, reg: b.conduct_flags,
         oldest: b.oldest_open_days, no_text_pct: b.rating_only_pct, first_timer_pct: b.new_account_pct, risk: b.risk_score, stars: b.rating_mix,
         universe, coverage: universe ? +((100 * b.reviews_read) / universe).toFixed(1) : 0,
         public_score: g?.google_public_score ?? null, owner_reply: g?.owner_reply_rate_pct ?? null,
+        cr_adj: 0, risk_new: 0, risk_delta: 0,
       };
     });
   }, [data, published]);
+  const tableRows = useMemo((): Row[] => {
+    if (!compare || shrink?.m == null) return rows;
+    const { m, p } = shrink;
+    return rows.map((r) => {
+      const adj = adjustedRate(r, m, p);
+      const risk_new = riskOf(adj, r);
+      return { ...r, cr_adj: Math.round(adj * 10) / 10, risk_new, risk_delta: risk_new - r.risk };
+    });
+  }, [rows, compare, shrink]);
 
   return (
     <>
@@ -81,12 +121,25 @@ function Branches({ view, data, trend, published }: { view: View; data: SignalBr
       </div>
       <AreaPanel view={view} points={points} />
       <div className="panel mb">
-        <PanelHead title="Branch league table" tag="click a column to sort" />
+        <div className="p-head">
+          <h3>Branch league table</h3>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {developer && (
+              <button className={'btn2' + (comparing ? ' solid' : '')} style={{ padding: '5px 11px' }} aria-pressed={comparing}
+                title="Developer only: the risk score with the complaint rate shrunk toward the national rate"
+                onClick={() => setComparing((v) => !v)}>
+                {comparing ? 'Hide formula comparison' : 'Compare risk formula'}
+              </button>
+            )}
+            <span className="p-tag">click a column to sort</span>
+          </span>
+        </div>
         <div className="p-note" style={{ color: '#8E5310' }}>This page reads Google reviews only. Instagram comments carry no branch, so the source filter does not apply here.</div>
         <CoverageNote rows={rows} />
-        <BranchTable rows={rows} />
+        {compare && <RiskCompareNote shrink={shrink} rows={tableRows} />}
+        <BranchTable rows={tableRows} compare={compare && shrink?.m != null} />
       </div>
-      <Composition rows={rows} />
+      <Composition rows={rows} developer={developer} />
       <Bridge from="branches" />
     </>
   );
@@ -273,6 +326,37 @@ function AreaPanel({ view, points }: { view: View; points: BranchPoint[] }) {
   );
 }
 
+/** Developer-only: where p and m came from, and what the proposed formula does to this view. */
+function RiskCompareNote({ shrink, rows }: { shrink: Shrink | null; rows: Row[] }) {
+  if (!shrink) return <div className="p-note">Loading every branch to estimate p and m…</div>;
+  const { full: f, m, p, fallback, period } = shrink;
+  if (m === null) return <div className="p-note">m cannot be estimated: across the full range the branches cannot be told apart from sampling noise (var_between ≤ 0).</div>;
+  const pq = f.p * (1 - f.p);
+  const at100 = (k: 'risk' | 'risk_new') => rows.filter((r) => r[k] === 100).length;
+  const thin = rows.filter((r) => r.n < MIN_N);
+  const eligible = rows.filter((r) => r.n >= MIN_N).sort((a, b) => b.risk_new - a.risk_new || b.n - a.n);
+  const card = (r: Row | undefined) => (r ? `${r.branch} — ${r.risk_new} · from ${fmt(r.n)} reviews` : `no branch with ${MIN_N}+ reviews`);
+  const lines = [
+    `m from the full range (${fmt(f.branches)} branches, ${fmt(f.N)} reviews, ${fmt(f.C)} complaints)`,
+    `  p_full    = ${fmt(f.C)} / ${fmt(f.N)} = ${f.p.toFixed(4)}      p(1-p) = ${pq.toFixed(4)}`,
+    `  var_total = ${f.varTotal.toFixed(5)}   var_noise = ${f.varNoise.toFixed(5)}   var_between = ${f.varReal.toFixed(5)}`,
+    `  m         = ${pq.toFixed(4)} / ${f.varReal.toFixed(5)} - 1 = ${m}`,
+    `p for this period = ${(100 * p).toFixed(1)}%` + (fallback
+      ? `  (the period holds ${fmt(period.N)} reviews, under ${PRIOR_MIN_N}: full-range rate used)`
+      : `  (${fmt(period.C)} / ${fmt(period.N)}, every branch)`),
+  ];
+  return (
+    <div className="p-note" style={{ maxWidth: 'none', background: '#F3F6F6', border: '1px dashed #C3D3D1', borderRadius: 8, padding: '10px 12px' }}>
+      <b>Developer · risk formula comparison.</b> Proposed: the complaint rate becomes <code>(c + m·p) / (n + m)</code>; critical + high, conduct and age are unchanged. Visible to developer accounts only.
+      <pre style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>{lines.join('\n')}</pre>
+      <div style={{ marginTop: 8 }}>
+        In this view, score 100 on {at100('risk')} → {at100('risk_new')} branches; of the {thin.length} under {MIN_N} reviews, {thin.filter((r) => r.risk === 100).length} → {thin.filter((r) => r.risk_new === 100).length}.
+        {' '}Highest (proposed, {MIN_N}+ reviews): {card(eligible[0])}. Lowest: {card(eligible.at(-1))}.
+      </div>
+    </div>
+  );
+}
+
 function CoverageNote({ rows }: { rows: Row[] }) {
   const cov = rows.filter((r) => r.universe).map((r) => r.coverage);
   const lo = Math.min(...cov), hi = Math.max(...cov);
@@ -284,16 +368,25 @@ function CoverageNote({ rows }: { rows: Row[] }) {
   );
 }
 
-function BranchTable({ rows }: { rows: Row[] }) {
+function BranchTable({ rows, compare }: { rows: Row[]; compare: boolean }) {
   const router = useRouter();
   const [sort, setSort] = useState<SortState<RowKey>>(['risk', 'desc']);
+  const cols = compare ? COMPARE_COLS : COLS;
+  const riskCell = (risk: number) => {
+    const c = riskColor(risk);
+    return (
+      <td className="n">
+        <b style={{ color: c }}>{risk}</b>
+        <div className="meter" style={{ marginTop: 5 }}><i style={{ width: `${risk}%`, background: c }} /></div>
+      </td>
+    );
+  };
   return (
     <div className="t-scroll">
       <table>
-        <SortHead cols={COLS} sort={sort} onSort={(f) => setSort((s) => nextSort(s, f))} />
+        <SortHead cols={cols} sort={sort} onSort={(f) => setSort((s) => nextSort(s, f))} />
         <tbody>
           {rows.length ? sortRows(rows, sort).map((r) => {
-            const c = riskColor(r.risk);
             return (
               <tr key={r.branch_id} className="clickable" onClick={() => router.push(branchHref(r.branch_id))}>
                 <td style={{ minWidth: 170 }}><b>{r.branch}</b><div className="sub">{r.where}</div></td>
@@ -302,32 +395,48 @@ function BranchTable({ rows }: { rows: Row[] }) {
                 <td className="n" style={alarm(r.avg !== null && r.avg < 4)}>{r.avg?.toFixed(2) ?? '—'}</td>
                 <td className="n" title="The star average Google shows the public, before this scrape's sampling">{r.public_score?.toFixed(1) ?? '—'}</td>
                 <td className="n" style={alarm(r.cr > 15)}>{r.cr}%</td>
+                {compare && <td className="n" style={alarm(r.cr_adj > 15)} title={`(${r.c} + m·p) / (${r.n} + m)`}>{r.cr_adj}%</td>}
                 <td className="n">{r.crit}</td>
                 <td className="n" style={alarm(r.reg)}>{r.reg || '—'}</td>
                 <td className="n" style={alarm(r.owner_reply !== null && r.owner_reply < 50)}>{r.owner_reply !== null ? r.owner_reply + '%' : '—'}</td>
                 <td className="n">{r.oldest}d</td>
                 <td className="n">{r.no_text_pct}%</td>
                 <td className="n">{r.first_timer_pct}%</td>
-                <td className="n">
-                  <b style={{ color: c }}>{r.risk}</b>
-                  <div className="meter" style={{ marginTop: 5 }}><i style={{ width: `${r.risk}%`, background: c }} /></div>
-                </td>
+                {riskCell(r.risk)}
+                {compare && riskCell(r.risk_new)}
+                {compare && (
+                  <td className="n" style={r.risk_delta < 0 ? { color: T.grow, fontWeight: 600 } : alarm(r.risk_delta > 0)}>
+                    {r.risk_delta > 0 ? '+' : ''}{r.risk_delta}
+                  </td>
+                )}
               </tr>
             );
-          }) : <EmptyRow colSpan={COLS.length}>No branch reviews in this view.</EmptyRow>}
+          }) : <EmptyRow colSpan={cols.length}>No branch reviews in this view.</EmptyRow>}
         </tbody>
       </table>
     </div>
   );
 }
 
-type CompMode = 'rating' | 'coverage';
+type CompMode = 'rating' | 'coverage' | 'treemap';
 /** Bars a composition chart draws; past this the axis stops being readable. */
 const COMP_TOP = 30;
+/** Tiles the treemap draws; small enough that the smallest still shows its mix. */
+const TREEMAP_TOP = 80;
 const COMP_MODES: [CompMode, string][] = [['rating', 'Rating mix'], ['coverage', 'Sample coverage']];
+/* The treemap is on trial, so only developer accounts get the third chip. */
+const DEV_COMP_MODES: [CompMode, string][] = [...COMP_MODES, ['treemap', 'Treemap (dev)']];
 
-function Composition({ rows }: { rows: Row[] }) {
-  const [mode, setMode] = useState<CompMode>('rating');
+function Composition({ rows, developer }: { rows: Row[]; developer: boolean }) {
+  const router = useRouter();
+  const [picked, setPicked] = useState<CompMode>('rating');
+  /* Signing out of the developer account mid-view falls back to the bar chart. */
+  const mode: CompMode = picked === 'treemap' && !developer ? 'rating' : picked;
+  const treemapItems = useMemo(() => {
+    const total = (r: Row) => r.stars.reduce((a, b) => a + b, 0);
+    return [...rows].sort((a, b) => total(b) - total(a)).slice(0, TREEMAP_TOP)
+      .map((r) => ({ id: r.branch_id, name: r.branch, stars: r.stars }));
+  }, [rows]);
   const config = useMemo((): ChartConfig<'bar'> => {
     const legend = { position: 'top' as const, align: 'end' as const, labels: { font: { size: 10.5 } } };
     const scales = { x: { ...AXIS, stacked: true, beginAtZero: true }, y: { ...NOGRID, stacked: true } };
@@ -370,16 +479,28 @@ function Composition({ rows }: { rows: Row[] }) {
   }, [rows, mode]);
   return (
     <div className="panel mb">
-      <div className="p-head"><h3>{mode === 'rating' ? 'Rating mix' : 'Sample coverage'}</h3><Chips flush options={COMP_MODES} value={mode} onPick={setMode} /></div>
+      <div className="p-head">
+        <h3>{mode === 'coverage' ? 'Sample coverage' : 'Rating mix'}</h3>
+        <Chips flush options={developer ? DEV_COMP_MODES : COMP_MODES} value={mode} onPick={setPicked} />
+      </div>
       <div className="p-note">
         {mode === 'rating'
           ? 'A branch with no one-star reviews is not necessarily healthy. A branch whose one-star reviews repeat the same topic definitely is not.'
+          : mode === 'treemap'
+          ? 'Developer view. Each tile is a branch: its size is the number of ratings, and it is filled from 5★ at the top down to 1★ at the bottom, so a red floor marks a one-star problem. Hover a tile for the counts, click it to open the branch.'
           : 'Grey is what exists on Google. Dark is what this prototype has read. Closing this gap is the first job of the production pipeline.'}
       </div>
-      {rows.length ? <ChartBox config={config} /> : <div className="empty-note">No branch reviews in this view.</div>}
-      {rows.length > COMP_TOP && (
+      {mode === 'treemap' && (
+        <div className="legend" style={{ marginBottom: 10 }}>
+          {[4, 3, 2, 1, 0].map((i) => <span key={i} className="band-key"><i style={{ background: STAR[i] }} />{i + 1}★</span>)}
+        </div>
+      )}
+      {!rows.length ? <div className="empty-note">No branch reviews in this view.</div>
+        : mode === 'treemap' ? <RatingTreemap items={treemapItems} onOpen={(id) => router.push(branchHref(id))} />
+        : <ChartBox config={config} />}
+      {rows.length > (mode === 'treemap' ? TREEMAP_TOP : COMP_TOP) && (
         <div className="p-note" style={{ margin: '8px 0 0' }}>
-          The {COMP_TOP} branches with the most {mode === 'rating' ? 'ratings' : 'reviews on Google'}, of {fmt(rows.length)}. The table above lists every branch.
+          The {mode === 'treemap' ? TREEMAP_TOP : COMP_TOP} branches with the most {mode === 'coverage' ? 'reviews on Google' : 'ratings'}, of {fmt(rows.length)}. The table above lists every branch.
         </div>
       )}
     </div>

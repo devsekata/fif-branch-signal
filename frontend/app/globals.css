@@ -334,11 +334,17 @@ tbody tr{transition:background .16s}
 tbody tr:hover{background:var(--wash)}
 tbody tr:last-child td{border-bottom:none}
 .t-scroll{overflow:auto;max-height:560px;margin:0 -4px}
+/* The header stays in view while the rows scroll under it. A collapsed border does not travel
+   with a sticky cell, so the rule under the header is drawn as an inset shadow instead. */
+.t-scroll thead th{position:sticky;top:0;z-index:2;background:var(--card);padding-top:9px;
+  border-bottom:none;box-shadow:inset 0 -1px 0 var(--rule)}
 /* The escalation queue is ten columns wide, so its row action is pinned to the right edge
    instead of scrolling out of reach. */
 .q-table th:last-child,.q-table td:last-child{position:sticky;right:0;z-index:1;
   background:var(--card);box-shadow:-11px 0 14px -12px rgba(11,35,32,.45)}
 .q-table tbody tr:hover td:last-child{background:var(--wash)}
+/* The pinned Action header sits on both edges, so it goes above the other pinned cells. */
+.q-table thead th:last-child{z-index:3;box-shadow:inset 0 -1px 0 var(--rule),-11px 0 14px -12px rgba(11,35,32,.45)}
 /* The score breakdown wraps under the score instead of widening its column, so the case text gets the room. */
 .q-table .q-break{max-width:150px;margin-left:auto;line-height:1.4}
 .q-table td.q-case{min-width:300px}
@@ -383,6 +389,9 @@ tbody tr:last-child td{border-bottom:none}
   border:1px solid var(--rule);background:var(--card);color:var(--ink-2);cursor:pointer;transition:all .18s}
 .chips button:hover{border-color:#C3D3D1;color:var(--ink)}
 .chips button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+/* Kept on one row: the chips shrink, the longest first, and their labels end in an ellipsis. */
+.chips.one-line{flex-wrap:nowrap;min-width:0}
+.chips.one-line button{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* placeholder */
 .ph{border:1.5px dashed #C3D5D3;background:
@@ -678,3 +687,19 @@ tr.clickable,.thread.clickable{cursor:pointer}
   background:var(--card);border:1px solid var(--rule);border-radius:24px;padding:9px 16px;font-size:13px;font-weight:600;color:var(--ink-2);box-shadow:0 10px 28px -14px rgba(11,35,32,.55);pointer-events:none}
 .geo-spin{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--rule);border-top-color:var(--deep);animation:geo-spin .8s linear infinite}
 @keyframes geo-spin{to{transform:rotate(360deg)}}
+/* Sentiment score bands: a swatch, its range and how many areas or branches fall in it. */
+.band-key{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.band-key i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.band-key .n{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.band-score{display:inline-flex;align-items:center;gap:6px}
+.band-score i{width:9px;height:9px;border-radius:50%;display:inline-block}
+/* Rating mix treemap (developer view): tiles sized by ratings, filled with the star mix. */
+.treemap{position:relative;width:100%;overflow:hidden;border-radius:var(--r-sm)}
+.tm-tile{position:absolute;box-sizing:border-box;border:1.5px solid var(--card);overflow:hidden;cursor:pointer}
+.tm-tile:hover{border-color:var(--ink)}
+.tm-mix{position:absolute;inset:0;display:flex;flex-direction:column}
+.tm-mix i{display:block;min-height:0}
+.tm-label{position:absolute;left:6px;top:5px;right:6px;color:#fff;font-size:11px;line-height:1.3;
+  text-shadow:0 1px 2px rgba(11,35,32,.75);pointer-events:none;overflow:hidden}
+.tm-label b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tm-label span{font-size:10px;opacity:.95}

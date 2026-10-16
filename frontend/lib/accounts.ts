@@ -10,12 +10,15 @@ export interface Account {
   email: string;
   password: string;
   role: RoleId;
+  /** Sees the developer-only tools, such as the risk formula comparison on the Branches page. */
+  developer?: boolean;
 }
 
 export const ACCOUNTS: Account[] = [
   { email: 'branch@gmail.com', password: 'fif2026', role: 'branch' },
   { email: 'cx@gmail.com', password: 'fif2026', role: 'cx' },
   { email: 'compliance@gmail.com', password: 'fif2026', role: 'comp' },
+  { email: 'developer@gmail.com', password: 'fif2026', role: 'comp', developer: true },
 ];
 
 /** The matching account, or null. Email is matched case-insensitively; the password is not. */
