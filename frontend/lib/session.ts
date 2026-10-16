@@ -16,6 +16,7 @@ export interface Session {
   email: string;
   role: RoleId;
   since: string;
+  developer?: boolean;
 }
 
 const subscribers = new Set<() => void>();
@@ -53,8 +54,8 @@ export function useSession(): Session | null {
   return useSyncExternalStore(subscribe, readSession, () => null);
 }
 
-export function signIn(email: string, role: RoleId) {
-  const s: Session = { email: email.trim().toLowerCase(), role, since: new Date().toISOString() };
+export function signIn(email: string, role: RoleId, developer = false) {
+  const s: Session = { email: email.trim().toLowerCase(), role, since: new Date().toISOString(), ...(developer ? { developer } : {}) };
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* private mode: the session just will not persist */ }
   subscribers.forEach((fn) => fn());
 }

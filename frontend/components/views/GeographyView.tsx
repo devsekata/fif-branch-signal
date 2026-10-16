@@ -7,11 +7,11 @@ import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox'
 import { AiNote, ApiPage, Bridge, Chips, EmptyRow, Formula, Metric, MixBar, PanelHead } from '@/components/ui';
 import { getJson, useApi } from '@/lib/api';
 import { NO_SCOPE, useFilters } from '@/lib/filters';
-import { GEO_METRICS, SCORE_RAMP, toAreas, toPoints, type Area, type BranchPoint, type GeoMetric, type RegionCollection } from '@/lib/geo';
+import { GEO_METRICS, SCORE_BANDS, scoreBand, toAreas, toPoints, type Area, type BranchPoint, type GeoMetric, type RegionCollection } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import { pickScope, useView, type AreaLevel, type View } from '@/lib/scope';
-import { MIN_N, NO_MIX, addMix, readOf, scoreColor, share } from '@/lib/signal';
+import { MIN_N, NO_MIX, addMix, readOf, share } from '@/lib/signal';
 import { IRRELEVANT, NEUTRAL, T, plural, fmt } from '@/lib/theme';
 import type { SignalBranchesResponse } from '@/lib/types';
 
@@ -216,7 +216,7 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
               )}
             </div>
           )}
-        <Legend metric={metric} points={markers.length > 0} polygons={!outline && features.length > 0} />
+        <Legend metric={metric} points={markers.length > 0} polygons={!outline && features.length > 0} items={!outline && features.length > 0 ? areas : markers} />
         <MapNote areas={areas} level={level} />
         <div style={{ height: 16 }} />
       </div>
@@ -280,13 +280,29 @@ function PointKey() {
   );
 }
 
-function Legend({ metric, points, polygons }: { metric: GeoMetric; points: boolean; polygons: boolean }) {
+/** A score with its band's colour beside it; the number stays in ink, as the palest band is too light for text. */
+function BandScore({ score, scored }: { score: number | null; scored: boolean }) {
+  if (!scored || score === null) return <b style={{ color: 'var(--ink-3)' }}>—</b>;
+  const band = scoreBand(score);
+  return (
+    <span className="band-score" title={`${band.label} · ${band.name}`}>
+      <i style={{ background: band.color }} /><b>{score}</b>
+    </span>
+  );
+}
+
+function Legend({ metric, points, polygons, items }: { metric: GeoMetric; points: boolean; polygons: boolean; items: { mix: { score: number | null }; enough: boolean }[] }) {
   if (metric === 'score' || !polygons) {
+    /* What is coloured: the areas, or the branch points when the areas are drawn as outlines only. */
+    const count = (b: (typeof SCORE_BANDS)[number]) => items.filter((a) => a.enough && a.mix.score !== null && scoreBand(a.mix.score) === b).length;
     return (
       <div className="legend">
         <span><b style={{ color: 'var(--ink)' }}>Sentiment score</b></span>
-        <span className="ramp">{SCORE_RAMP.map((c) => <i key={c} style={{ background: c }} />)}</span>
-        <span>0 &nbsp;→&nbsp; 100</span>
+        {SCORE_BANDS.map((b) => (
+          <span key={b.label} className="band-key" title={`${b.name}: ${count(b)} ${polygons ? 'areas' : 'branches'} in view`}>
+            <i style={{ background: b.color }} />{b.label}<span className="n">{count(b)}</span>
+          </span>
+        ))}
         {polygons && <span><span className="swatch hatch" />under {MIN_N} reviews, not scored</span>}
         {points && <PointKey />}
         <Formula />
@@ -422,7 +438,7 @@ function RankTable({ areas, level, onPick }: { areas: Area[]; level: AreaLevel; 
               <td className="n">{readOf(a.mix).toLocaleString('id-ID')}</td>
               <td><MixBar mix={a.mix} /><div className="sub">{fmt(a.mix.good)} / {fmt(a.mix.neutral)} / {fmt(a.mix.bad)} / {fmt(a.mix.irrelevant)}</div></td>
               <td className="n">
-                <b style={{ color: scoreColor(a.mix.score, a.enough) }}>{a.enough ? a.mix.score : '—'}</b>
+                <BandScore score={a.mix.score} scored={a.enough} />
                 {!a.enough && <div className="sub">under {MIN_N}</div>}
               </td>
               <td className="n">{a.unanswered || '—'}</td>
@@ -449,7 +465,7 @@ function PlacedTable({ points }: { points: BranchPoint[] }) {
               <td>{b.stated_kecamatan ?? '—'}</td>
               <td>{b.kecamatan ?? <span style={{ color: 'var(--ink-3)' }}>not placed</span>}{b.kecamatan && <div className="sub">{[b.kota, b.province].filter(Boolean).join(', ')}</div>}</td>
               <td className="n">{readOf(mix)}</td>
-              <td className="n"><b style={{ color: scoreColor(mix.score, enough) }}>{enough ? mix.score : '—'}</b></td>
+              <td className="n"><BandScore score={mix.score} scored={enough} /></td>
               <td className="n">{fmt(mix.bad)}</td>
               <td className="n">{mix.irrelevant || '—'}</td>
               <td className="n">{fmt(unanswered)}</td>

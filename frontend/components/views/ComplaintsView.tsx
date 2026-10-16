@@ -10,7 +10,7 @@ import { toPoints } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useView, type View } from '@/lib/scope';
 import { praiseInScope, topicRows, type TopicRow } from '@/lib/topics';
-import { T, fmt } from '@/lib/theme';
+import { IG, T, fmt } from '@/lib/theme';
 import type { ComplaintsResponse, SignalBranchesResponse, SignalOverviewResponse } from '@/lib/types';
 
 type Praise = ReturnType<typeof praiseInScope>;
@@ -55,8 +55,8 @@ function ClassificationCard({ view, topics, praise }: { view: View; topics: Topi
     data: {
       labels: rows.map((r) => r.label),
       datasets: [
+        /* No neutral series: neutral categories are counted in the boxes below, never on this axis. */
         { label: 'Positive', data: rows.map((r) => r.good), backgroundColor: T.grow, borderRadius: 3 },
-        { label: 'Neutral', data: rows.map(() => 0), backgroundColor: T.calm, borderRadius: 3 },
         { label: 'Negative', data: rows.map((r) => r.bad), backgroundColor: T.sig, borderRadius: 3 },
       ],
     },
@@ -105,7 +105,6 @@ function ClassificationCard({ view, topics, praise }: { view: View; topics: Topi
 
 /* ---------- what customers complain about ---------- */
 type ClsMode = 'bad' | 'good' | 'all';
-const NEG_LIGHT = '#E8928D';
 const CLS_MODES: [ClsMode, string][] = [['bad', 'Negative'], ['good', 'Positive'], ['all', 'Both sides']];
 
 function TopicsPanel({ view, topics, praise }: { view: View; topics: TopicRow[]; praise: Praise }) {
@@ -115,9 +114,9 @@ function TopicsPanel({ view, topics, praise }: { view: View; topics: TopicRow[];
     const y = { ...NOGRID, ticks: { padding: 6, font: { size: 11.5 } } };
     if (mode === 'bad') {
       const ds = [];
-      /* Every negative bar is red; severity is in the tooltip. Instagram takes a lighter red so the two channels still tell apart. */
+      /* Google bars are red; severity is in the tooltip. Instagram takes the Instagram purple used on the Overview. */
       if (view.useG) ds.push({ label: 'Google reviews', data: topics.map((r) => r.g), backgroundColor: T.sig, borderRadius: 4 });
-      if (view.useS) ds.push({ label: 'Instagram', data: topics.map((r) => r.s), backgroundColor: NEG_LIGHT, borderRadius: 4 });
+      if (view.useS) ds.push({ label: 'Instagram', data: topics.map((r) => r.s), backgroundColor: IG, borderRadius: 4 });
       return {
         type: 'bar',
         data: { labels: topics.map((r) => r.label), datasets: ds },

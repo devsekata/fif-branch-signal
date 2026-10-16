@@ -50,18 +50,23 @@ export function Metric({ k, v, n, color, small }: { k: ReactNode; v: ReactNode; 
 }
 
 /** One way to draw a small set of choices: anything with two to five options is chips. */
-export function Chips<V extends string>({ options, value, onPick, counts, flush }: {
+export function Chips<V extends string>({ options, value, onPick, counts, flush, oneLine }: {
   options: readonly (readonly [V, string])[];
   value: V;
   onPick: (v: V) => void;
   counts?: Partial<Record<V, number>>;
   /** Sits in a panel head, so it carries no bottom margin. */
   flush?: boolean;
+  /** Never wraps: on a narrow screen the labels are cut short with an ellipsis instead. */
+  oneLine?: boolean;
 }) {
+  /* On one line only the longest label gives way; the shorter ones stay whole. */
+  const longest = oneLine ? options.reduce((a, o) => (o[1].length > a.length ? o[1] : a), '') : null;
   return (
-    <div className="chips" style={flush ? { margin: 0 } : undefined}>
+    <div className={oneLine ? 'chips one-line' : 'chips'} style={flush ? { margin: 0 } : undefined}>
       {options.map(([v, label]) => (
-        <button key={v} className={value === v ? 'on' : undefined} onClick={() => onPick(v)}>
+        <button key={v} className={value === v ? 'on' : undefined} onClick={() => onPick(v)}
+          title={oneLine ? label : undefined} style={oneLine ? { flexShrink: label === longest ? 1 : 0 } : undefined}>
           {label}{counts && <> <span style={{ opacity: 0.6 }}>{counts[v] ?? 0}</span></>}
         </button>
       ))}

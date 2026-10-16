@@ -98,6 +98,9 @@ export function CaseDrawer({ c, role, email, onClose, onMoved }: {
   const sendMove = moves.find((m) => SEND_MOVES.includes(m.id));
   const editable = EDITABLE.includes(s.status) && s.sendState === 'idle';
   const pool = track === 'conduct' ? TEMPLATES.conduct : TEMPLATES.service;
+  /* Templates written for one of this case's topics are offered first. */
+  const suggested = pool.filter((t) => t.topics?.some((id) => c.topics.includes(id)));
+  const others = pool.filter((t) => !suggested.includes(t));
   const steps = TRACKS[track];
   const at = steps.indexOf(s.status);
 
@@ -302,8 +305,15 @@ export function CaseDrawer({ c, role, email, onClose, onMoved }: {
                   writeCase(c.id, logTo(next, 'Draft written', t ? `From template: ${t.label}` : '', role));
                 }}
               >
-                <option value="">Choose a template…</option>
-                {pool.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                <option value="">{suggested.length ? `Choose a template… (${suggested.length} suggested)` : 'Choose a template…'}</option>
+                {suggested.length > 0 && (
+                  <optgroup label="Suggested for this case">
+                    {suggested.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                  </optgroup>
+                )}
+                {suggested.length > 0
+                  ? <optgroup label="Other templates">{others.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</optgroup>
+                  : others.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
               <textarea
                 className="compose" value={s.draft} disabled={!editable}

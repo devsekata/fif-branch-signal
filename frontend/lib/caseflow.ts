@@ -150,9 +150,23 @@ export const MOVES: Move[] = [
     label: 'Reopen', desc: 'Something new surfaced on the same case.' },
 ];
 
+export interface ReplyTemplate {
+  id: string;
+  label: string;
+  body: string;
+  /** Topic ids the template answers; a case carrying one gets it suggested first. None means it fits any case. */
+  topics?: string[];
+}
+
 /** Placeholder copy. Real wording must be written and signed off by FIF legal. */
-export const TEMPLATES: Record<'conduct' | 'service', { id: string; label: string; body: string }[]> = {
+export const TEMPLATES: Record<'conduct' | 'service', ReplyTemplate[]> = {
   conduct: [
+    { id: 'c3', label: 'Collection conduct report', topics: ['penagihan_debt_collector'],
+      body: 'Terima kasih telah menyampaikan pengalaman Anda, Bapak/Ibu. Kami tidak membenarkan cara penagihan yang tidak sopan, mengancam, atau mempermalukan. Laporan ini kami teruskan ke unit terkait untuk ditelusuri. Mohon hubungi kami melalui [kanal resmi] dengan menyebutkan nomor kontrak serta waktu dan lokasi kejadian.' },
+    { id: 'c4', label: 'Alleged misappropriated instalment', topics: ['dugaan_penggelapan_angsuran'],
+      body: 'Terima kasih atas laporannya, Bapak/Ibu. Kami memahami kekhawatiran Anda terkait pembayaran angsuran. Agar dapat segera kami telusuri, mohon hubungi [kanal resmi] dengan menyertakan nomor kontrak dan bukti pembayaran. Sebagai pengingat, pembayaran resmi hanya melalui [kanal bayar resmi].' },
+    { id: 'c5', label: 'Personal data exposed', topics: ['doxing_sebar_data_pribadi'],
+      body: 'Terima kasih telah melaporkan hal ini. Kami menanggapi serius setiap penyebaran data pribadi. Demi keamanan, mohon tidak membagikan data pribadi di kolom komentar. Silakan hubungi kami melalui [kanal resmi] agar laporan Anda dapat kami tindak lanjuti.' },
     { id: 'c1', label: 'Acknowledge and route to investigation',
       body: 'Terima kasih atas laporannya. Kami menanggapi serius setiap laporan terkait perilaku penagihan dan menindaklanjutinya melalui unit terkait. Agar dapat kami telusuri, mohon hubungi layanan pelanggan kami di [kanal resmi] dengan menyebutkan nomor kontrak Anda.' },
     { id: 'c2', label: 'Request private contact, no admission',
@@ -167,6 +181,24 @@ export const TEMPLATES: Record<'conduct' | 'service', { id: string; label: strin
       body: 'Terima kasih telah menginformasikan kendala ini. Mohon coba [langkah singkat]. Apabila kendala berlanjut, silakan hubungi kami melalui [kanal resmi] dengan menyertakan tangkapan layar agar dapat kami periksa.' },
     { id: 's4', label: 'Thank the customer',
       body: 'Terima kasih atas apresiasinya, Bapak/Ibu. Senang mendengar pelayanan kami membantu. Sampai jumpa kembali.' },
+    { id: 's5', label: 'Hard to reach customer service', topics: ['cs_respons_sulit_dihubungi'],
+      body: 'Mohon maaf atas kesulitan menghubungi kami, Bapak/Ibu. Untuk respons yang lebih cepat, silakan hubungi [kanal resmi] pada [jam layanan]. Tim kami akan membantu menindaklanjuti kendala Anda.' },
+    { id: 's6', label: 'Staff attitude or poor service', topics: ['sikap_keramahan_staf', 'pelayanan_buruk_umum'],
+      body: 'Terima kasih atas masukannya, Bapak/Ibu. Mohon maaf atas sikap dan pelayanan yang kurang berkenan. Masukan ini kami sampaikan kepada pimpinan cabang sebagai bahan evaluasi dan pembinaan. Untuk tindak lanjut, silakan hubungi kami di [kanal resmi].' },
+    { id: 's7', label: 'Long wait or queue', topics: ['waktu_tunggu_antrean'],
+      body: 'Mohon maaf atas waktu tunggu yang lama, Bapak/Ibu. Masukan ini kami sampaikan kepada cabang terkait untuk perbaikan alur layanan. Beberapa layanan juga dapat diakses melalui [aplikasi/kanal digital] tanpa perlu datang ke cabang.' },
+    { id: 's8', label: 'Interest, late fee or charges', topics: ['bunga_denda_biaya', 'tanya_jatuh_tempo_dan_denda'],
+      body: 'Terima kasih atas pertanyaannya, Bapak/Ibu. Rincian bunga, denda, dan biaya mengikuti perjanjian pembiayaan yang telah disepakati. Untuk penjelasan rinci atas kontrak Anda, silakan hubungi [kanal resmi] dengan menyebutkan nomor kontrak.' },
+    { id: 's9', label: 'Application or document process', topics: ['proses_kredit_dokumen', 'tanya_syarat_dan_dokumen', 'tanya_status_pengajuan'],
+      body: 'Terima kasih atas pertanyaannya, Bapak/Ibu. Persyaratan dan status pengajuan dapat dicek melalui [aplikasi/tautan resmi] atau ditanyakan langsung ke cabang terdekat. Bila ada kendala, silakan hubungi [kanal resmi] dengan menyertakan nomor pengajuan.' },
+    { id: 's10', label: 'Payoff and BPKB release', topics: ['tanya_pelunasan_dan_bpkb'],
+      body: 'Terima kasih atas pertanyaannya, Bapak/Ibu. Untuk pelunasan dan pengambilan BPKB, silakan siapkan [dokumen yang diperlukan] dan datang ke cabang tempat kontrak dibuat, atau cek informasinya di [tautan resmi]. Kami siap membantu.' },
+    { id: 's11', label: 'Payment channels', topics: ['tanya_pembayaran_dan_kanal_bayar'],
+      body: 'Terima kasih atas pertanyaannya, Bapak/Ibu. Pembayaran angsuran dapat dilakukan melalui [daftar kanal bayar resmi]. Mohon hanya membayar melalui kanal resmi tersebut dan simpan bukti pembayarannya.' },
+    { id: 's12', label: 'App or system issue', topics: ['aplikasi_sistem'],
+      body: 'Mohon maaf atas kendala pada aplikasi kami, Bapak/Ibu. Silakan pastikan aplikasi sudah versi terbaru, lalu coba kembali. Bila kendala berlanjut, hubungi [kanal resmi] dengan menyertakan tangkapan layar agar dapat kami periksa.' },
+    { id: 's13', label: 'Warning to other customers', topics: ['peringatan_ke_calon_nasabah'],
+      body: 'Terima kasih telah berbagi pengalaman, Bapak/Ibu. Kami ingin memahami lebih lanjut apa yang terjadi agar dapat menindaklanjutinya. Mohon hubungi kami melalui [kanal resmi] dengan menyebutkan nomor kontrak atau cabang terkait.' },
   ],
 };
 

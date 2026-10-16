@@ -18,7 +18,7 @@ export function LoginView() {
       setError('That email and password do not match an account.');
       return;
     }
-    signIn(account.email, account.role);
+    signIn(account.email, account.role, account.developer);
     router.replace('/');
   }
 

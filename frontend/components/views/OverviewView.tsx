@@ -389,7 +389,7 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
   const dir = delta > 1.5 ? 'improving' : delta < -1.5 ? 'sliding' : 'flat';
   return (
     <div className="panel">
-      <div className="p-head"><h3>How sentiment is moving</h3><Chips flush options={TREND_MODES} value={mode} onPick={setMode} /></div>
+      <div className="p-head"><h3 style={{ flexShrink: 0 }}>How sentiment is moving</h3><Chips flush oneLine options={TREND_MODES} value={mode} onPick={setMode} /></div>
       <div className="p-note">
         {mode === 'mix'
           ? 'Every review and comment read, split four ways; irrelevant/spam stays out of the score. The line is the sentiment score for that month — it moves even when volume does not.'

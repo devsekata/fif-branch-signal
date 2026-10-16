@@ -59,6 +59,20 @@ export const GEO_METRICS: [GeoMetric, string][] = [
 ];
 export const SCORE_RAMP = ['#C8322B', '#D8801F', '#B08F2A', '#7FB8AE', '#1F8C84'];
 
+/** The sentiment score in five clusters, worst first. One colour per range, on the map, its legend and the tables beside it. */
+export const SCORE_BANDS = [
+  { min: 0, max: 34, label: '0–34', name: 'poor', color: SCORE_RAMP[0] },
+  { min: 35, max: 49, label: '35–49', name: 'weak', color: SCORE_RAMP[1] },
+  { min: 50, max: 64, label: '50–64', name: 'mixed', color: SCORE_RAMP[2] },
+  { min: 65, max: 79, label: '65–79', name: 'good', color: SCORE_RAMP[3] },
+  { min: 80, max: 100, label: '80–100', name: 'strong', color: SCORE_RAMP[4] },
+] as const;
+
+export const scoreBand = (score: number) => [...SCORE_BANDS].reverse().find((b) => score >= b.min) ?? SCORE_BANDS[0];
+
+/** The band colour of a score, grey when it is not scored. */
+export const bandColor = (score: number | null, scored = true) => (!scored || score === null ? 'var(--ink-3)' : scoreBand(score).color);
+
 export const metricValue = (a: { mix: Mix; unanswered: number }, metric: GeoMetric) =>
   metric === 'score' ? a.mix.score : metric === 'unanswered' ? a.unanswered : a.mix[metric];
 
@@ -67,7 +81,7 @@ export function metricColor(a: { mix: Mix; enough: boolean; unanswered: number }
   const v = metricValue(a, metric);
   if (metric === 'score') {
     if (v === null || !a.enough) return '#E3EAE9';
-    return v >= 80 ? SCORE_RAMP[4] : v >= 65 ? SCORE_RAMP[3] : v >= 50 ? SCORE_RAMP[2] : v >= 35 ? SCORE_RAMP[1] : SCORE_RAMP[0];
+    return scoreBand(v).color;
   }
   const t = Math.min(1, (v ?? 0) / Math.max(1, max));
   const rgb = metric === 'bad' || metric === 'unanswered' ? '200,50,43' : metric === 'good' ? '31,140,132' : metric === 'irrelevant' ? '84,104,101' : '19,89,85';
