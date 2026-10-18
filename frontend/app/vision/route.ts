@@ -55,6 +55,13 @@ Then judge the image on five separate checks. Each check gets a score from 0 to 
 
 1. ai_generated — the picture was produced or substantially altered by an image generator. Look for warped or nonsensical lettering, malformed hands, faces or logos, over-smooth skin and surfaces, repeating textures, impossible geometry, inconsistent shadows and reflections. A real photo, a normal screenshot or ordinary graphic design scores low. If the evidence is weak, say so and keep the score near the middle rather than guessing high.
 2. tampered — an existing image was edited after the fact: text or numbers replaced, a phone number, account number or contact detail pasted over, a logo inserted. Use the forensic inspection above. List each suspect region in suspect_areas with what looks wrong there.
+   The probability is computed from tampered.evidence, not taken from your score, so fill evidence carefully. Pick the region most likely to have been edited (usually a phone number, account number or amount) and compare it with the printed text right around it on each of these four criteria, one entry per criterion:
+   - "sharpness_pixels": edges, pixels and font. Pasted text often has crisp vector edges and no compression or noise, while the photographed print around it is soft, grainy or blurred by the camera; a different font, weight, size, spacing or baseline counts here too.
+   - "perspective": does the text follow the tilt, lens distortion and curvature of the surface it is printed on, or does it sit flat and straight while the surface around it is angled?
+   - "lighting": does it share the glare, shadows, fading and colour cast of the print around it, or is it a flat, uniform digital colour such as pure black?
+   - "context": does the content contradict the rest of the image or the reference — a number in a FIF channel slot that is not the official number for it, the same channel shown elsewhere in the image with a different number or format, a value that does not fit its label? On genuine FIF material every number is official, so an unofficial one there is an anomaly.
+   Compare at the level of single characters: put the suspect number beside the line directly above and below it and check stroke thickness, darkness, letter height, character spacing, the slant of the baseline and how sharp the edges are. A number that is darker, bolder, crisper or larger than lines of the same size on the same card is an anomaly even when the difference is small. Read every number in the image, including small labels, stickers and footers, and check whether any of them repeat or contradict the suspect one.
+   For each give finding ("anomaly" when it points to an edit, "consistent" when that region matches its surroundings, "cannot_tell" when the resolution or angle does not allow a judgement), confidence 0–100 in that finding, area (where in the image), and observation (one sentence naming what you see). Judge only what is visible: a sharp, clean screenshot or a straight scan is not an anomaly in itself; compare against the surroundings. In a phone photo, a soft or compressed picture, a "consistent" finding is rarely more than 60 sure: say "cannot_tell" rather than claim certainty the pixels do not give. With no candidate region at all, mark every criterion "consistent".
 3. indecent — nudity, sexual content or otherwise improper imagery that should not appear on a brand account.
 4. misleading — the content would lead a reader to lose money or data, or to believe something untrue. Be exhaustive: this check must not miss a single item. There are two grounds for a conflict, and you must say which one applies:
    - The image presents itself as FIF (its name, logo, products or staff) and something in it goes against the reference above. Say which FIF practice it breaks.
@@ -62,7 +69,7 @@ Then judge the image on five separate checks. Each check gets a score from 0 to 
    a. Go through the image line by line and fill items_checked with EVERY one of the following that appears, with none left out: every phone or WhatsApp number, every bank or e-wallet account number, every link or domain, every account name or handle, and every separate claim, offer, condition or instruction in the text. One entry per item, in reading order. Read the small print, watermarks, stickers and text inside screenshots too.
    b. For each entry give: kind ("phone", "account", "link", "handle" or "text"), value (copied exactly as written), status, and note (a few words of your own on why). status is "conflict" when the item goes against the reference or is a trap in its own right, "ok" when it is harmless or matches the reference, and "unverifiable" when it cannot be settled.
       The next four rules apply when the image presents itself as FIF. When it does not, a contact detail is "conflict" only if it is the way into a trap named above, and otherwise "unverifiable".
-      - A phone number is "ok" only if it is an official channel in the reference. A mobile number (08xx / +62 8xx) presented as FIF customer service, admin, head office, collection or settlement is "conflict". A mobile number of a named branch marketing officer inviting new applications is "unverifiable".
+      - A phone number is "ok" only if it is an official number in the reference. Every other number shown as a FIF call, SMS, WhatsApp, complaint, suggestions, customer service, admin, collection or settlement line is "conflict", even on a poster that otherwise looks genuine. Only a mobile number of a named branch marketing officer inviting new applications is "unverifiable".
       - An account number is "conflict" when it is in a private person's name or has no company name beside it.
       - A link is "ok" only on fifgroup.co.id or the official app stores; shortened links, other domains and APK files are "conflict".
       - A handle or account name is "conflict" when it imitates FIF without being an official channel in the reference.
@@ -103,8 +110,22 @@ const SCHEMA = {
         score: { type: 'INTEGER' },
         reason: { type: 'STRING' },
         suspect_areas: { type: 'ARRAY', items: { type: 'STRING' } },
+        evidence: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              criterion: { type: 'STRING', enum: ['sharpness_pixels', 'perspective', 'lighting', 'context'] },
+              finding: { type: 'STRING', enum: ['anomaly', 'consistent', 'cannot_tell'] },
+              confidence: { type: 'INTEGER' },
+              area: { type: 'STRING' },
+              observation: { type: 'STRING' },
+            },
+            required: ['criterion', 'finding', 'confidence', 'area', 'observation'],
+          },
+        },
       },
-      required: ['score', 'reason', 'suspect_areas'],
+      required: ['score', 'reason', 'suspect_areas', 'evidence'],
     },
     indecent: verdict,
     misleading: {
@@ -180,6 +201,32 @@ function items(v: unknown) {
     }];
   });
 }
+/* What each forensic criterion can add to the tampering probability. They sum to 100, and the probability
+ * stops at 99: a picture alone is never proof. */
+const TAMPER_WEIGHT = { sharpness_pixels: 30, perspective: 30, lighting: 20, context: 20 } as const;
+type Criterion = keyof typeof TAMPER_WEIGHT;
+const FINDINGS = ['anomaly', 'consistent', 'cannot_tell'];
+
+/** One entry per criterion (the strongest when the model gave several), with the points it adds:
+ *  its weight times the confidence, and only for an anomaly. */
+function tamperEvidence(v: unknown) {
+  const best = new Map<Criterion, { criterion: Criterion; finding: string; confidence: number; area: string; observation: string; weight: number; points: number }>();
+  for (const raw of Array.isArray(v) ? v : []) {
+    const e = raw as { criterion?: unknown; finding?: unknown; confidence?: unknown; area?: unknown; observation?: unknown };
+    if (!(typeof e?.criterion === 'string' && e.criterion in TAMPER_WEIGHT)) continue;
+    const criterion = e.criterion as Criterion;
+    const finding = FINDINGS.includes(e.finding as string) ? (e.finding as string) : 'cannot_tell';
+    const confidence = clamp(e.confidence);
+    const weight = TAMPER_WEIGHT[criterion];
+    const entry = { criterion, finding, confidence, area: str(e.area), observation: str(e.observation), weight, points: finding === 'anomaly' ? (weight * confidence) / 100 : 0 };
+    const had = best.get(criterion);
+    if (!had || entry.points > had.points || (entry.points === had.points && confidence > had.confidence)) best.set(criterion, entry);
+  }
+  const evidence = (Object.keys(TAMPER_WEIGHT) as Criterion[]).flatMap((c) => best.get(c) ?? []);
+  const score = Math.min(99, Math.round(evidence.reduce((a, e) => a + e.points, 0)));
+  return { evidence: evidence.map((e) => ({ ...e, points: Math.round(e.points) })), score };
+}
+
 const list = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string' && s.trim() !== '').map(mask) : []);
 
 interface GeminiResponse {
@@ -299,7 +346,7 @@ export async function POST(req: Request) {
     const none = { score: 0, reason: 'Not assessed: the model refused the image before judging it.' };
     return Response.json({
       provider, model: MODEL, seconds, blocked,
-      ai_generated: none, tampered: { ...none, suspect_areas: [] }, misleading: { ...none, signals: [], needs_checking: [], items_checked: [] }, spam: { ...none, category: 'none', signals: [] },
+      ai_generated: none, tampered: { ...none, suspect_areas: [], evidence: [] }, misleading: { ...none, signals: [], needs_checking: [], items_checked: [] }, spam: { ...none, category: 'none', signals: [] },
       indecent: { score: 100, reason: `${NAME}'s safety filter refused this image (${blocked}), which it does for explicit or prohibited content.` },
       extracted_text: '', summary: 'The image was refused by the safety filter, so only the indecency check has an answer.',
     });
@@ -310,7 +357,20 @@ export async function POST(req: Request) {
 
   const out: Record<string, unknown> = { provider, model: MODEL, seconds, blocked: null };
   for (const id of CHECKS) {
-    const v = (parsed[id] ?? {}) as { score?: unknown; reason?: unknown; suspect_areas?: unknown; signals?: unknown; needs_checking?: unknown; items_checked?: unknown };
+    const v = (parsed[id] ?? {}) as { score?: unknown; reason?: unknown; suspect_areas?: unknown; signals?: unknown; needs_checking?: unknown; items_checked?: unknown; evidence?: unknown };
+    if (id === 'tampered') {
+      /* The probability is the weighted sum of the forensic evidence, so the same findings always give the same
+       * number. The model's own score stands only when it returned no evidence at all. */
+      /* A FIF channel carrying an unofficial number is itself the contradiction this criterion asks about, so the
+       * item-by-item pass feeds it even when the forensic answer missed it. */
+      const misleading = (parsed.misleading ?? {}) as { items_checked?: unknown };
+      const wrong = items(misleading.items_checked).find((it) => it.status === 'conflict' && ['phone', 'account', 'link'].includes(it.kind));
+      const raw = Array.isArray(v.evidence) ? [...v.evidence] : [];
+      if (wrong) raw.push({ criterion: 'context', finding: 'anomaly', confidence: 90, area: `"${wrong.value}"`, observation: `Not an official FIF contact where one belongs: ${wrong.note}` });
+      const { evidence, score } = tamperEvidence(raw);
+      out[id] = { score: evidence.length ? score : clamp(v.score), reason: str(v.reason), suspect_areas: list(v.suspect_areas), evidence };
+      continue;
+    }
     if (id === 'misleading') {
       const checked = items(v.items_checked);
       const conflicts = checked.filter((it) => it.status === 'conflict');
@@ -331,11 +391,7 @@ export async function POST(req: Request) {
       out[id] = { score: hit ? Math.max(clamp(v.score), FLAG_FLOOR) : clamp(v.score), reason: str(v.reason), category, signals };
       continue;
     }
-    out[id] = {
-      score: clamp(v.score),
-      reason: str(v.reason),
-      ...(id === 'tampered' ? { suspect_areas: list(v.suspect_areas) } : {}),
-    };
+    out[id] = { score: clamp(v.score), reason: str(v.reason) };
   }
   out.extracted_text = str(parsed.extracted_text);
   out.summary = str(parsed.summary);

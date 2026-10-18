@@ -32,7 +32,7 @@ OFFICIAL CHANNELS (from fifgroup.co.id)
 - Instagram: @fifclub (instagram.com/fifclub). Facebook: FIFCLUB (facebook.com/FIFCLUB). X / Twitter: @fifclub. TikTok: @fifclub. YouTube: youtube.com/user/fifgroup.
 - Careers: karir-rise.fifgroup.co.id, the Instagram account "Growing at FIFGROUP", and the FIFGROUP page on LinkedIn.
 - Mobile app: FIFGROUP Mobile Customer (FMC), from the official app stores only.
-- Older official material may carry other service numbers, for example an SMS number ending in 1500343 or a suggestions line. A number that is not listed above is unverifiable rather than wrong when it sits on otherwise official material; it is a conflict when it is a personal mobile number presented as head-office service, admin, collection or settlement.
+- The numbers above are the only official contact numbers. On material that presents itself as FIF (a poster, banner, flyer, letter or post with FIF's name or logo), any call, SMS, WhatsApp, complaint or suggestions number that is not one of them is a conflict, even when everything else on the material looks genuine: pasting another number over a real FIF poster is a known way of abusing the name. The one exception is below.
 - FIF does not run customer service from personal WhatsApp numbers, personal Telegram accounts or personal Facebook profiles. A branch marketing officer may legitimately show a personal number on a flyer for new applications.
 
 HOW PAYMENT WORKS

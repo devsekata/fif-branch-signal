@@ -35,12 +35,13 @@ export interface Area {
 
 const mixOf = ({ good, neutral, bad, total, score, irrelevant }: Mix): Mix => ({ good, neutral, bad, total, score, irrelevant: irrelevant ?? 0 });
 
-/** The map's sentiment score: (positive − (negative + neutral)) ÷ (positive + negative + neutral), on the same
- *  0–100 scale as the API score (50 × (1 + x)). Unlike the API score a neutral review counts against the area,
- *  so only praise lifts it. Set here, for the Geography page only; every other page keeps the API's score. */
+/** The map's sentiment score: 100 × (positive − (negative + neutral)) ÷ (positive + negative + neutral), as the
+ *  sentiment sheet computes it. Unlike the API score a neutral review counts against the area, so only praise
+ *  lifts it, and it falls below 0 when fewer than half the reviews are positive (coloured as the lowest band).
+ *  Set here, for the Geography page only; every other page keeps the API's score. */
 export const mapScoreOf = ({ good, neutral, bad }: Pick<Mix, 'good' | 'neutral' | 'bad'>) => {
   const total = good + neutral + bad;
-  return total ? Math.round(50 * (1 + (good - (bad + neutral)) / total) * 10) / 10 : null;
+  return total ? Math.round((1000 * (good - (bad + neutral))) / total) / 10 : null;
 };
 
 /** The same figures with the map's score in place of the API's. */
