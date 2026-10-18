@@ -62,12 +62,24 @@ export function Masonry({ children, className }: { children: ReactNode; classNam
         });
       });
     };
+    /* A pill inside a card swaps what the card shows, and the new content is a different height; re-splitting
+     * then would move the card out from under the reader's cursor. So the first pick freezes that card at the
+     * height it has now, before the new content renders, and anything longer scrolls inside the card. */
+    const pin = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest('.chips button')) return;
+      const card = Array.from(grid.children).find((el) => el.contains(t)) as HTMLElement | undefined;
+      if (!card || card.classList.contains('pinned')) return;
+      card.style.height = `${card.getBoundingClientRect().height}px`;
+      card.classList.add('pinned');
+    };
+    grid.addEventListener('click', pin, true);
     /* A card grows when its chart or list arrives, so every card is watched, not just the grid. */
     const ro = new ResizeObserver(layout);
     ro.observe(grid);
     for (const el of Array.from(grid.children)) ro.observe(el);
     layout();
-    return () => { cancelAnimationFrame(frame); ro.disconnect(); };
+    return () => { cancelAnimationFrame(frame); ro.disconnect(); grid.removeEventListener('click', pin, true); };
   }, [children]);
 
   return (

@@ -292,6 +292,7 @@ select.tpl{width:100%;font-family:inherit;font-size:12.5px;padding:8px 10px;bord
 /* Masonry: two equal columns of 4px rows; components/Masonry.tsx places each card in the shorter column. */
 .masonry{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-auto-rows:4px;column-gap:16px;align-items:start}
 .masonry>*{min-width:0;margin-bottom:0}
+.masonry>.pinned{overflow-y:auto}
 /* A list that would run far past the column beside it scrolls inside its card instead. */
 .list-cap{max-height:1150px;overflow:auto;margin-right:-8px;padding-right:8px}
 /* A pair left side by side is as tall as its own content too. */
@@ -372,6 +373,8 @@ tbody tr:last-child td{border-bottom:none}
 .meter{height:6px;border-radius:3px;background:var(--rule-2);overflow:hidden;min-width:56px}
 .meter i{display:block;height:100%;border-radius:3px}
 .quote{color:#22302E;max-width:560px;line-height:1.55}
+.link-btn{background:none;border:0;padding:0;font:inherit;font-size:12px;font-weight:600;color:var(--grow);cursor:pointer;white-space:nowrap}
+.link-btn:hover{text-decoration:underline}
 .link{color:var(--deep);font-weight:600;text-decoration:none;border-bottom:1px solid transparent;transition:border-color .18s}
 .link:hover{border-color:var(--deep)}
 

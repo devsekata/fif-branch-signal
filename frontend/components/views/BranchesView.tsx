@@ -6,7 +6,7 @@ import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox'
 import { AiNote, ApiPage, Bridge, Chips, EmptyRow, Formula, Metric, MixBar, PanelHead, SortHead, type Col } from '@/components/ui';
 import { RatingTreemap } from '@/components/RatingTreemap';
 import { useApi } from '@/lib/api';
-import { PRIOR_MIN_N, adjustedRate, estimateM, priorOf, riskOf, type MEstimate } from '@/lib/riskShrink';
+import { PRIOR_MIN_N, estimateM, priorOf, riskOf, type MEstimate } from '@/lib/riskShrink';
 import { useSession } from '@/lib/session';
 import { toPoints, type BranchPoint } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
@@ -36,9 +36,10 @@ interface Row {
   coverage: number;
   public_score: number | null;
   owner_reply: number | null;
-  /* The proposed formula beside the live one; zero unless the developer comparison is on. */
+  /** The shrunk complaint rate the live risk score reads. */
   cr_adj: number;
-  risk_new: number;
+  /* The previous formula beside the live one; zero unless the developer comparison is on. */
+  risk_old: number;
   risk_delta: number;
 }
 type RowKey = keyof Row & string;
@@ -46,14 +47,14 @@ type RowKey = keyof Row & string;
 const COLS: Col<RowKey>[] = [
   ['branch', 'Branch', false], ['n', 'Inbound Message', true], ['coverage', 'Coverage', true], ['avg', 'Rating', true],
   ['public_score', 'Public score', true], ['cr', 'Complaint rate', true], ['crit', 'Critical + high', true],
-  ['reg', 'Conduct flags', true], ['owner_reply', 'Owner replies', true], ['oldest', 'Oldest open', true],
+  ['reg', 'Conduct flags', true], ['owner_reply', 'Owner replies', true], ['oldest', 'Oldest Inbound', true],
   ['no_text_pct', 'Rating only', true], ['first_timer_pct', 'New accounts', true], ['risk', 'Risk', true],
 ];
 
-/* The comparison adds the shrunk rate beside the raw one and the proposed score beside the live one. */
+/* The comparison adds the shrunk rate beside the raw one and the previous score beside the live one. */
 const COMPARE_COLS: Col<RowKey>[] = COLS.flatMap((c): Col<RowKey>[] =>
   c[0] === 'cr' ? [c, ['cr_adj', 'Rate adj', true]]
-    : c[0] === 'risk' ? [['risk', 'Risk (current)', true], ['risk_new', 'Risk (proposed)', true], ['risk_delta', 'Δ', true]]
+    : c[0] === 'risk' ? [['risk_old', 'Risk (old)', true], ['risk', 'Risk (new)', true], ['risk_delta', 'Δ', true]]
       : [c]);
 
 /** Shrinkage inputs for the developer comparison, all from the data: m over the full range, p over the period. */
@@ -96,19 +97,18 @@ function Branches({ view, data, trend, published }: { view: View; data: SignalBr
         oldest: b.oldest_open_days, no_text_pct: b.rating_only_pct, first_timer_pct: b.new_account_pct, risk: b.risk_score, stars: b.rating_mix,
         universe, coverage: universe ? +((100 * b.reviews_read) / universe).toFixed(1) : 0,
         public_score: g?.google_public_score ?? null, owner_reply: g?.owner_reply_rate_pct ?? null,
-        cr_adj: 0, risk_new: 0, risk_delta: 0,
+        cr_adj: b.complaint_rate_adj_pct ?? b.complaint_rate_pct, risk_old: 0, risk_delta: 0,
       };
     });
   }, [data, published]);
   const tableRows = useMemo((): Row[] => {
-    if (!compare || shrink?.m == null) return rows;
-    const { m, p } = shrink;
+    if (!compare) return rows;
+    /* The API scores on the shrunk rate; the old score is the same sum on the raw rate. */
     return rows.map((r) => {
-      const adj = adjustedRate(r, m, p);
-      const risk_new = riskOf(adj, r);
-      return { ...r, cr_adj: Math.round(adj * 10) / 10, risk_new, risk_delta: risk_new - r.risk };
+      const risk_old = riskOf(r.n ? (100 * r.c) / r.n : 0, r);
+      return { ...r, risk_old, risk_delta: r.risk - risk_old };
     });
-  }, [rows, compare, shrink]);
+  }, [rows, compare]);
 
   return (
     <>
@@ -332,10 +332,10 @@ function RiskCompareNote({ shrink, rows }: { shrink: Shrink | null; rows: Row[] 
   const { full: f, m, p, fallback, period } = shrink;
   if (m === null) return <div className="p-note">m cannot be estimated: across the full range the branches cannot be told apart from sampling noise (var_between ≤ 0).</div>;
   const pq = f.p * (1 - f.p);
-  const at100 = (k: 'risk' | 'risk_new') => rows.filter((r) => r[k] === 100).length;
+  const at100 = (k: 'risk' | 'risk_old') => rows.filter((r) => r[k] === 100).length;
   const thin = rows.filter((r) => r.n < MIN_N);
-  const eligible = rows.filter((r) => r.n >= MIN_N).sort((a, b) => b.risk_new - a.risk_new || b.n - a.n);
-  const card = (r: Row | undefined) => (r ? `${r.branch} — ${r.risk_new} · from ${fmt(r.n)} reviews` : `no branch with ${MIN_N}+ reviews`);
+  const eligible = rows.filter((r) => r.n >= MIN_N).sort((a, b) => b.risk - a.risk || b.n - a.n);
+  const card = (r: Row | undefined) => (r ? `${r.branch} — ${r.risk} · from ${fmt(r.n)} reviews` : `no branch with ${MIN_N}+ reviews`);
   const lines = [
     `m from the full range (${fmt(f.branches)} branches, ${fmt(f.N)} reviews, ${fmt(f.C)} complaints)`,
     `  p_full    = ${fmt(f.C)} / ${fmt(f.N)} = ${f.p.toFixed(4)}      p(1-p) = ${pq.toFixed(4)}`,
@@ -347,11 +347,11 @@ function RiskCompareNote({ shrink, rows }: { shrink: Shrink | null; rows: Row[] 
   ];
   return (
     <div className="p-note" style={{ maxWidth: 'none', background: '#F3F6F6', border: '1px dashed #C3D3D1', borderRadius: 8, padding: '10px 12px' }}>
-      <b>Developer · risk formula comparison.</b> Proposed: the complaint rate becomes <code>(c + m·p) / (n + m)</code>; critical + high, conduct and age are unchanged. Visible to developer accounts only.
+      <b>Developer · risk formula comparison.</b> Live: the risk score reads the complaint rate as <code>(c + m·p) / (n + m)</code>; critical + high, conduct and age are unchanged. &quot;Risk (old)&quot; is the previous formula on the raw rate. Visible to developer accounts only.
       <pre style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>{lines.join('\n')}</pre>
       <div style={{ marginTop: 8 }}>
-        In this view, score 100 on {at100('risk')} → {at100('risk_new')} branches; of the {thin.length} under {MIN_N} reviews, {thin.filter((r) => r.risk === 100).length} → {thin.filter((r) => r.risk_new === 100).length}.
-        {' '}Highest (proposed, {MIN_N}+ reviews): {card(eligible[0])}. Lowest: {card(eligible.at(-1))}.
+        In this view, score 100 on {at100('risk_old')} → {at100('risk')} branches; of the {thin.length} under {MIN_N} reviews, {thin.filter((r) => r.risk_old === 100).length} → {thin.filter((r) => r.risk === 100).length}.
+        {' '}Highest ({MIN_N}+ reviews): {card(eligible[0])}. Lowest: {card(eligible.at(-1))}.
       </div>
     </div>
   );
@@ -402,8 +402,8 @@ function BranchTable({ rows, compare }: { rows: Row[]; compare: boolean }) {
                 <td className="n">{r.oldest}d</td>
                 <td className="n">{r.no_text_pct}%</td>
                 <td className="n">{r.first_timer_pct}%</td>
+                {compare && riskCell(r.risk_old)}
                 {riskCell(r.risk)}
-                {compare && riskCell(r.risk_new)}
                 {compare && (
                   <td className="n" style={r.risk_delta < 0 ? { color: T.grow, fontWeight: 600 } : alarm(r.risk_delta > 0)}>
                     {r.risk_delta > 0 ? '+' : ''}{r.risk_delta}

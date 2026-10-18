@@ -127,7 +127,7 @@ function Queue({ list, onMoved }: { list: CaseList; onMoved: () => void }) {
                 <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
                 <td className="q-case">
                   <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>
-                    {c.text ? c.text.slice(0, 420) : <NoText />}
+                    {c.text ? <CaseText text={c.text} /> : <NoText />}
                     {c.url && (
                       <a className="open-link" href={c.url} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
                         title="Open the original review" aria-label="Open the original review">
@@ -162,4 +162,21 @@ function StatusPill({ id, status }: { id: string; status: string }) {
   const tone = known?.tone;
   const color = tone === 'ok' ? 'var(--grow)' : tone === 'bad' ? T.sig : tone === 'warn' ? 'var(--warn)' : 'var(--ink-3)';
   return <span className="sub" style={{ color, fontWeight: 600, whiteSpace: 'nowrap', marginTop: 0 }}>{known?.label ?? now}</span>;
+}
+
+/** Past this many characters a review is cut in the row, with a toggle that reads the rest in place. */
+const CUT = 320;
+
+/** The whole review, folded when it is long so one case does not fill the screen. */
+function CaseText({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  if (text.length <= CUT) return <>{text}</>;
+  return (
+    <>
+      {all ? text : `${text.slice(0, CUT).trimEnd()}…`}{' '}
+      <button className="link-btn" onClick={(e) => { e.stopPropagation(); setAll((v) => !v); }}>
+        {all ? 'Show less' : 'Read all'}
+      </button>
+    </>
+  );
 }
