@@ -478,6 +478,8 @@ export interface SignalBranch extends Mix {
   avg_rating: number | null;
   complaints: number;
   complaint_rate_pct: number;
+  /** The complaint rate shrunk toward risk_prior, (c + m·p) / (n + m): the rate the risk score reads. */
+  complaint_rate_adj_pct?: number;
   critical_high: number;
   conduct_flags: number;
   oldest_open_days: number;
@@ -500,6 +502,8 @@ export interface SignalArea extends Mix {
 export interface SignalBranchesResponse {
   context: ApiContext;
   min_n: number;
+  /** What the risk score shrinks each complaint rate toward: m reviews' weight at rate p. */
+  risk_prior?: { m: number; p: number; p_from_full_range: boolean };
   branches: SignalBranch[];
   areas: Record<'province' | 'kota' | 'kecamatan', SignalArea[]>;
 }

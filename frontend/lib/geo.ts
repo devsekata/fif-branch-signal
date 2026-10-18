@@ -35,6 +35,17 @@ export interface Area {
 
 const mixOf = ({ good, neutral, bad, total, score, irrelevant }: Mix): Mix => ({ good, neutral, bad, total, score, irrelevant: irrelevant ?? 0 });
 
+/** The map's sentiment score: (positive − (negative + neutral)) ÷ (positive + negative + neutral), on the same
+ *  0–100 scale as the API score (50 × (1 + x)). Unlike the API score a neutral review counts against the area,
+ *  so only praise lifts it. Set here, for the Geography page only; every other page keeps the API's score. */
+export const mapScoreOf = ({ good, neutral, bad }: Pick<Mix, 'good' | 'neutral' | 'bad'>) => {
+  const total = good + neutral + bad;
+  return total ? Math.round(50 * (1 + (good - (bad + neutral)) / total) * 10) / 10 : null;
+};
+
+/** The same figures with the map's score in place of the API's. */
+export const withMapScore = <T extends { mix: Mix }>(a: T): T => ({ ...a, mix: { ...a.mix, score: mapScoreOf(a.mix) } });
+
 export function toPoints(d: SignalBranchesResponse | undefined): BranchPoint[] {
   return (d?.branches ?? []).map((b) => ({
     place: {

@@ -4,10 +4,10 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
-import { AiNote, ApiPage, Bridge, Chips, EmptyRow, Formula, Metric, MixBar, PanelHead } from '@/components/ui';
+import { AiNote, ApiPage, Bridge, Chips, EmptyRow, Metric, MixBar, PanelHead } from '@/components/ui';
 import { getJson, useApi } from '@/lib/api';
 import { NO_SCOPE, useFilters } from '@/lib/filters';
-import { GEO_METRICS, SCORE_BANDS, scoreBand, toAreas, toPoints, type Area, type BranchPoint, type GeoMetric, type RegionCollection } from '@/lib/geo';
+import { GEO_METRICS, SCORE_BANDS, scoreBand, toAreas, toPoints, withMapScore, type Area, type BranchPoint, type GeoMetric, type RegionCollection } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import { pickScope, useView, type AreaLevel, type View } from '@/lib/scope';
@@ -111,10 +111,15 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
     return [...ours, ...master.filter((f) => !have.has(f.properties.nama.toLowerCase()))];
   }, [boundaries.data, shipped, level, sel.province]);
 
-  const points = useMemo(() => toPoints(data), [data]);
+  const points = useMemo(() => {
+    const pts = toPoints(data).map(withMapScore);
+    /* The API ranks on its own score; on the map the rank follows the map's score. */
+    [...pts].filter((p) => p.enough && p.mix.score !== null).sort((a, b) => b.mix.score! - a.mix.score!).forEach((p, i) => { p.rank = i + 1; });
+    return pts;
+  }, [data]);
   const placed = useMemo(() => points.filter((p) => p.place[level]), [points, level]);
   const unplaced = useMemo(() => (level === 'province' ? points.filter((p) => !p.place.province) : []), [points, level]);
-  const areas = useMemo(() => toAreas(data, level), [data, level]);
+  const areas = useMemo(() => toAreas(data, level).map(withMapScore), [data, level]);
   const byName = useMemo(() => new Map(areas.map((a) => [a.name, a])), [areas]);
 
   /* Areas are coloured at every level: provinces, then the kab/kota of a province, then the kecamatan
@@ -254,7 +259,7 @@ function Geography({ view, data, loading }: { view: View; data: SignalBranchesRe
 }
 
 function GeoMetrics({ areas, points }: { areas: Area[]; points: BranchPoint[] }) {
-  const mix = points.reduce((a, p) => addMix(a, p.mix), NO_MIX);
+  const mix = withMapScore({ mix: points.reduce((a, p) => addMix(a, p.mix), NO_MIX) }).mix;
   const worst = areas.filter((a) => a.enough).sort((a, b) => a.mix.score! - b.mix.score!)[0];
   return (
     <div className="grid g-4 mb">
@@ -305,7 +310,7 @@ function Legend({ metric, points, polygons, items }: { metric: GeoMetric; points
         ))}
         {polygons && <span><span className="swatch hatch" />under {MIN_N} reviews, not scored</span>}
         {points && <PointKey />}
-        <Formula />
+        <span className="formula">score = <b>(positive − (negative + neutral)) ÷ (positive + negative + neutral)</b>, mapped to 0–100</span>
       </div>
     );
   }

@@ -1,6 +1,7 @@
-/* The branch risk score with the complaint rate shrunk toward the national rate, as proposed in
- * "Usulan Perubahan — Branch Risk Score". Developer-only: it sits beside the live score for
- * comparison and replaces nothing. Every input comes from the data:
+/* The branch risk score reads the complaint rate shrunk toward the national rate ("Usulan Perubahan —
+ * Branch Risk Score"); the API computes it (fif-api src/api/riskPrior.ts). This file re-derives the
+ * inputs for the developer-only comparison on the Branches page, which sets the live score beside the
+ * previous formula. Every input comes from the data:
  *
  *   rate_adj = (c + m·p) / (n + m)
  *   p = complaint rate of every branch in the active period (the full-range rate below PRIOR_MIN_N reviews)
@@ -42,9 +43,6 @@ export function priorOf(period: MEstimate, full: MEstimate): { p: number; fallba
   return period.N < PRIOR_MIN_N ? { p: full.p, fallback: true } : { p: period.p, fallback: false };
 }
 
-/** The shrunk complaint rate, in percent. */
-export const adjustedRate = (r: Pick<RiskInput, 'n' | 'c'>, m: number, p: number) => (100 * (r.c + m * p)) / (r.n + m);
-
-/** The live formula with the rate term given; the rest is as the API computes it. */
+/** The score with the rate term given; the rest is as the API computes it. Fed the raw rate, it is the previous formula. */
 export const riskOf = (ratePct: number, r: RiskInput) =>
   Math.round(Math.min(100, ratePct * 1.15 + r.crit * 4 + r.reg * 7 + Math.min(15, r.oldest / 25)));

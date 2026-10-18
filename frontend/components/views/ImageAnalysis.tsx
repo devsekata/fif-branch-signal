@@ -29,6 +29,11 @@ const CHECKS: Check[] = [
 
 /** A check is flagged from this score up. A placeholder until it is calibrated on real pictures. */
 const FLAG_AT = 60;
+/** From this score up a check is not flagged but not cleared either: someone should look. */
+const WATCH_AT = 35;
+
+/** The two checks that say the picture itself cannot be trusted. A picture flagged on either is taken out of the results. */
+const FAKE: CheckId[] = ['ai_generated', 'tampered'];
 
 interface CheckedItem { kind: 'phone' | 'account' | 'link' | 'handle' | 'text'; value: string; status: 'conflict' | 'ok' | 'unverifiable'; note: string }
 interface Verdict { score: number; reason: string; suspect_areas?: string[]; signals?: string[]; needs_checking?: string[]; items_checked?: CheckedItem[]; category?: string }
@@ -63,7 +68,28 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const kb = (bytes: number) => (bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 const when = (iso: string) =>
   new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
-const tone = (score: number) => (score >= FLAG_AT ? T.sig : score >= 35 ? 'var(--warn)' : 'var(--grow)');
+const tone = (score: number) => (score >= FLAG_AT ? T.sig : score >= WATCH_AT ? 'var(--warn)' : 'var(--grow)');
+
+/** Whether a picture was judged generated or altered, and so left out of the results. */
+const isFake = (r: Analysis) => FAKE.some((id) => r[id].score >= FLAG_AT);
+
+/** What still needs a person when no check is flagged: items the model could not verify, points it says the
+ *  image cannot settle, scores just under the flag, and checks a refusal left unanswered. */
+function openPoints(r: Analysis): string[] {
+  const out: string[] = [];
+  const items = CHECKS.flatMap((c) => r[c.id].items_checked ?? []);
+  const conflict = items.filter((it) => it.status === 'conflict').length;
+  if (conflict) out.push(`${conflict} ${conflict === 1 ? 'item conflicts' : 'items conflict'} with how FIF operates`);
+  const kinds = new Map<string, number>();
+  for (const it of items) if (it.status === 'unverifiable') kinds.set(KIND[it.kind].toLowerCase(), (kinds.get(KIND[it.kind].toLowerCase()) ?? 0) + 1);
+  for (const [k, n] of kinds) out.push(`${n} ${k}${n === 1 ? '' : 's'} could not be verified`);
+  const unsettled = CHECKS.reduce((a, c) => a + (r[c.id].needs_checking?.length ?? 0), 0);
+  if (unsettled) out.push(`${unsettled} ${unsettled === 1 ? 'point' : 'points'} the image cannot settle`);
+  const near = CHECKS.filter((c) => r[c.id].score >= WATCH_AT && r[c.id].score < FLAG_AT);
+  if (near.length) out.push(`${near.map((c) => c.label).join(', ')} close to the flag`);
+  if (r.blocked) out.push('four checks not assessed');
+  return out;
+}
 
 async function analyseImage(file: File, provider: Provider): Promise<Analysis> {
   const form = new FormData();
@@ -125,8 +151,13 @@ export function ImageAnalysis() {
   }
 
   const shown = rows.find((r) => r.id === openId) ?? rows[0];
-  const flagged = (id: CheckId) => rows.filter((r) => r[id].score >= FLAG_AT).length;
-  const anyFlag = rows.filter((r) => CHECKS.some((c) => r[c.id].score >= FLAG_AT)).length;
+  /* A generated or altered picture is taken out of the results: it is listed in its own card, and the other
+   * checks are counted over the pictures that are left. */
+  const fakes = rows.filter(isFake);
+  const kept = rows.filter((r) => !isFake(r));
+  const flagged = (id: CheckId, from = kept) => from.filter((r) => r[id].score >= FLAG_AT).length;
+  const anyFlag = kept.filter((r) => CHECKS.some((c) => r[c.id].score >= FLAG_AT)).length;
+  const toCheck = kept.filter((r) => !CHECKS.some((c) => r[c.id].score >= FLAG_AT) && openPoints(r).length).length;
 
   return (
     <>
@@ -140,8 +171,8 @@ export function ImageAnalysis() {
       </div>
 
       <div className="grid g-4 mb">
-        <Metric k="Images analysed" v={rows.length} n={rows.length ? `${anyFlag} flagged on at least one check` : 'in this session'} />
-        <Metric k="AI-generated or altered" v={flagged('ai_generated') + flagged('tampered')} n={`${flagged('ai_generated')} generated · ${flagged('tampered')} altered`} bad={flagged('ai_generated') + flagged('tampered') > 0} />
+        <Metric k="Images analysed" v={rows.length} n={rows.length ? `${kept.length} in the results · ${anyFlag} flagged · ${toCheck} to verify` : 'in this session'} />
+        <Metric k="AI-generated or altered" v={fakes.length} n={`${flagged('ai_generated', rows)} generated · ${flagged('tampered', rows)} altered · left out of the results`} bad={fakes.length > 0} />
         <Metric k="Misleading or indecent" v={flagged('misleading') + flagged('indecent')} n={`${flagged('misleading')} misleading · ${flagged('indecent')} indecent`} bad={flagged('misleading') + flagged('indecent') > 0} />
         <Metric k="Spam" v={flagged('spam')} n="mass-posted or templated" bad={flagged('spam') > 0} />
       </div>
@@ -189,17 +220,19 @@ export function ImageAnalysis() {
         </div>
       </div>
 
+      <FakeCard rows={fakes} total={rows.length} shownId={shown?.id} onOpen={setOpenId} />
+
       <div className="panel">
-        <PanelHead title="Analysis history" tag={rows.length ? `${rows.length} analysed` : undefined} />
-        <div className="p-note">Held in this browser tab only, and gone on reload. Click a row to read its result above.</div>
-        {rows.length ? (
+        <PanelHead title="Analysis history" tag={rows.length ? `${kept.length} in the results${fakes.length ? ` · ${fakes.length} left out` : ''}` : undefined} />
+        <div className="p-note">Held in this browser tab only, and gone on reload. Click a row to read its result above. Pictures judged AI-generated or altered are listed in the card above, not here.</div>
+        {kept.length ? (
           <div className="t-scroll">
             <table>
               <thead>
                 <tr><th>Image</th>{CHECKS.map((c) => <th key={c.id}>{c.label}</th>)}<th>Analysed (WIB)</th></tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {kept.map((r) => (
                   <tr key={r.id} className="clickable" onClick={() => setOpenId(r.id)} style={r.id === shown?.id ? { background: 'var(--wash)' } : undefined}>
                     <td style={{ maxWidth: 240 }}><b style={{ wordBreak: 'break-all' }}>{r.name}</b><div className="sub">{kb(r.size)}</div></td>
                     {CHECKS.map((c) => {
@@ -217,7 +250,7 @@ export function ImageAnalysis() {
               </tbody>
             </table>
           </div>
-        ) : <div className="empty">No image analysed in this session.</div>}
+        ) : <div className="empty">{rows.length ? 'Every picture analysed so far was left out as AI-generated or altered.' : 'No image analysed in this session.'}</div>}
       </div>
     </>
   );
@@ -225,6 +258,9 @@ export function ImageAnalysis() {
 
 function ResultCard({ r }: { r: Result }) {
   const hits = CHECKS.filter((c) => r[c.id].score >= FLAG_AT).length;
+  const open = openPoints(r);
+  /* Green only when nothing is flagged and nothing is left to verify; a number that cannot be checked is not a clean result. */
+  const state = hits ? 'flag' : open.length ? 'check' : 'clear';
   return (
     <>
       <div className="cand" style={{ marginBottom: 14 }}>
@@ -233,9 +269,13 @@ function ResultCard({ r }: { r: Result }) {
         <div className="cand-body">
           <div><b style={{ wordBreak: 'break-all' }}>{r.name}</b> <span className="sub" style={{ display: 'inline' }}>· {kb(r.size)}</span></div>
           <div style={{ fontSize: 12.5, color: 'var(--ink-2)', margin: '5px 0', lineHeight: 1.55 }}>{r.summary}</div>
-          <div className="st" style={{ display: 'inline-block', ...(hits ? { background: '#FBEAE8', color: '#9C2019', borderColor: '#F3D5D2' } : { background: '#E1F4F2', color: '#136E68', borderColor: '#BEE9E6' }) }}>
-            {hits ? `${hits} of ${CHECKS.length} checks flagged` : 'No check flagged'}
+          <div className="st" style={{ display: 'inline-block', ...STATE_STYLE[state] }}>
+            {state === 'flag' ? `${hits} of ${CHECKS.length} checks flagged` : state === 'check' ? 'No check flagged — needs verifying' : 'No check flagged'}
           </div>
+          {isFake(r) && <div className="sub warn-text" style={{ margin: '6px 0 0' }}>Judged AI-generated or altered, so left out of the results.</div>}
+          {open.length > 0 && (
+            <ul className="img-check-areas" style={{ marginTop: 6 }}>{open.map((o) => <li key={o}>{o}</li>)}</ul>
+          )}
         </div>
       </div>
       {r.blocked && (
@@ -299,6 +339,55 @@ function ResultCard({ r }: { r: Result }) {
       )}
       <div className="sub" style={{ marginTop: 12 }}>Scores run 0–100. A check is flagged from {FLAG_AT} up; the threshold is a placeholder until it is calibrated on real pictures.</div>
     </>
+  );
+}
+
+const STATE_STYLE = {
+  flag: { background: '#FBEAE8', color: '#9C2019', borderColor: '#F3D5D2' },
+  check: { background: '#FCF1E1', color: '#8E5310', borderColor: '#F0DDBF' },
+  clear: { background: '#E1F4F2', color: '#136E68', borderColor: '#BEE9E6' },
+};
+
+/** How a generated or altered picture is caught, and the pictures this session left out of the results for it. */
+function FakeCard({ rows, total, shownId, onOpen }: { rows: Result[]; total: number; shownId?: string; onOpen: (id: string) => void }) {
+  return (
+    <div className="panel mb">
+      <PanelHead title="AI-generated and digitally altered" tag={total ? `${rows.length} of ${total} left out` : undefined} />
+      <div className="p-note">
+        Two of the five checks ask whether the picture itself can be trusted. <b>AI-generated</b> looks for a generator&apos;s marks: skin, hands and
+        text that do not hold together, lighting with no single source, backgrounds that melt. <b>Digitally altered</b> looks for what was changed
+        after the fact: a phone number, account or amount pasted over the original, mismatched fonts, edges and compression around a replaced area.
+        Each answers with a score; from {FLAG_AT} the picture is flagged.
+      </div>
+      <div className="p-note">
+        <b>A picture flagged on either is taken out of the results.</b> It is not counted in the misleading, indecent and spam totals, and it is
+        listed here instead of in the history below: a made or edited picture says nothing reliable about what customers saw. Its full result
+        can still be opened. The flag is a model&apos;s reading, not forensic proof, so check the picture before acting on it.
+      </div>
+      {rows.length ? (
+        <div className="t-scroll">
+          <table>
+            <thead><tr><th>Image</th><th className="n">AI-generated</th><th className="n">Digitally altered</th><th>Why</th></tr></thead>
+            <tbody>
+              {rows.map((r) => {
+                const why = FAKE.map((id) => r[id]).filter((v) => v.score >= FLAG_AT).map((v) => v.reason).filter(Boolean).join(' ');
+                return (
+                  <tr key={r.id} className="clickable" onClick={() => onOpen(r.id)} style={r.id === shownId ? { background: 'var(--wash)' } : undefined}>
+                    <td style={{ maxWidth: 220 }}><b style={{ wordBreak: 'break-all' }}>{r.name}</b><div className="sub">{when(r.analysedAt)} WIB</div></td>
+                    {FAKE.map((id) => (
+                      <td key={id} className="n"><b style={{ color: tone(r[id].score) }}>{r[id].score}</b></td>
+                    ))}
+                    <td style={{ minWidth: 240 }}><span className="sub" style={{ margin: 0 }}>{why || '—'}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty">{total ? 'No picture in this session was judged AI-generated or altered.' : 'Nothing analysed yet.'}</div>
+      )}
+    </div>
   );
 }
 
