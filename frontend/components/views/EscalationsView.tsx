@@ -1,132 +1,182 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ApiPage, Chip, EmptyRow, NoText, Rating, SortHead, SourceBadge, Tags, type Col } from '@/components/ui';
-import { useApi } from '@/lib/api';
-import { nextSort, sortRows, useScope, type SortState } from '@/lib/scope';
-import { T } from '@/lib/theme';
-import type { CaseItem, CasesResponse, Channel, Priority } from '@/lib/types';
+import { useCaseDrawer } from '@/components/CaseHost';
+import { AiNote, ApiPage, Chip, Chips, EmptyRow, NoText, Rating, SortHead, SourceBadge, Tags, type Col } from '@/components/ui';
+import { STATE, asState } from '@/lib/caseflow';
+import { useCaseList, type CaseList } from '@/lib/cases';
+import { slaLabel, toRow, type CaseRow } from '@/lib/caseRow';
+import { readCase, useCase, useStatusVersion } from '@/lib/caseStore';
+import { useReference } from '@/lib/reference';
+import { nextSort, sortRows, useView, type SortState } from '@/lib/scope';
+import { T, plural, fmt } from '@/lib/theme';
 
-/** A case flattened for display and sorting. */
-interface Row {
-  id: string;
-  priority: Priority;
-  score: number;
-  source: Channel;
-  where: string;
-  stars: number | null;
-  date: string;
-  age: number;
-  text: string;
-  topics: string[];
-  who: string;
-  meta: string;
-  url: string | null;
-  severity: number;
-  sentiment: string;
-  answered: boolean;
-  /** "severity 60 · rating 20 · recency 14.3", for the score cell's tooltip. */
-  breakdown: string;
-}
-
-type QueueKey = keyof Row & string;
+type QueueKey = keyof CaseRow & string;
 type QueueFilter = 'all' | 'critical' | 'high' | 'medium';
-
-/** The API's maximum page size; the queue reads one page, highest criticality first. */
-const LIMIT = 200;
+type Bucket = 'any' | 'opencases' | 'untouched' | 'working' | 'awaiting' | 'closed';
 
 const COLS: Col<QueueKey>[] = [
-  ['priority', 'Priority', false], ['score', 'Score', true], ['severity', 'Sev', true], ['source', 'Source', false],
+  ['priority', 'Priority', false], ['score', 'Score', true], ['severity', 'Sev', true], ['status', 'Status', false], ['source', 'Source', false],
   ['date', 'Posted', false], ['age', 'Age', true], ['answered', 'Reply', false],
   ['text', 'Case and topics', false], ['who', 'Author', false],
 ];
 
 const CHIPS: [QueueFilter, string][] = [['all', 'Everything'], ['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium']];
+const BUCKETS: [Bucket, string][] = [
+  ['any', 'Any status'], ['opencases', 'Open cases'], ['untouched', 'Never answered'], ['working', 'In progress'], ['awaiting', 'Awaiting approval'], ['closed', 'Closed'],
+];
 
-function toRow(c: CaseItem): Row {
-  const a = c.author;
-  const meta = [a.lifetime_reviews != null ? `${a.lifetime_reviews} reviews` : null, a.local_guide ? 'Local Guide' : null].filter(Boolean).join(', ');
-  const breakdown = Object.entries(c.score_components ?? {})
-    .filter(([, v]) => v)
-    .sort((x, y) => y[1] - x[1])
-    .map(([k, v]) => `${k} ${v}`)
-    .join(' · ');
-  return {
-    id: c.case_id, priority: c.priority, score: c.criticality ?? 0, source: c.source,
-    where: c.channel_ref.branch ?? 'Official account', stars: c.stars, date: c.posted_at, age: c.age_days,
-    text: c.text, topics: c.topic_ids, who: a.display ?? '—', meta, url: c.permalink,
-    severity: c.severity, sentiment: c.sentiment, answered: c.brand_replied, breakdown,
-  };
-}
+/** Where a case stands, in the four words a queue is read by. "Open cases" is every bucket but closed. */
+const bucketOf = (status: string): Exclude<Bucket, 'any' | 'opencases'> => {
+  const s = asState(status);
+  return s === 'open' ? 'untouched' : s === 'pending' ? 'awaiting' : s === 'closed' || s === 'verified' ? 'closed' : 'working';
+};
 
 export function EscalationsView() {
-  const { params } = useScope('escalations');
-  const res = useApi<CasesResponse>('/v1/cases', { ...params, limit: LIMIT });
+  const view = useView('escalations');
+  /* Complaints only, highest criticality first, across as many pages as the scope holds. */
+  const res = useCaseList({ ...view.sig, complaints: 'true', sort: 'criticality', order: 'desc' });
+  /* A move the server accepted re-reads the queue, so the case lands in the bucket it now belongs to. */
+  return <ApiPage res={res}>{(d) => <Queue list={d} onMoved={res.retry} />}</ApiPage>;
+}
+
+/** The case's status: what was done in this session if it has been touched, otherwise what the API last reported. */
+const statusNow = (id: string, status: string) => {
+  const s = readCase(id);
+  return s.trail.length ? s.status : status;
+};
+
+const inBucket = (b: Bucket, status: string) => b === 'any' || (b === 'opencases' ? bucketOf(status) !== 'closed' : bucketOf(status) === b);
+
+function Queue({ list, onMoved }: { list: CaseList; onMoved: () => void }) {
   const [filter, setFilter] = useState<QueueFilter>('all');
+  const [bucket, setBucket] = useState<Bucket>('any');
   const [sort, setSort] = useState<SortState<QueueKey>>(['score', 'desc']);
-  const all = useMemo(() => (res.data?.items ?? []).map(toRow), [res.data]);
+  const { topic } = useReference();
+  const pool = list.items;
+  /* Re-sorts the buckets the moment a case changes status here, before the re-read lands. */
+  const version = useStatusVersion();
+  const all = useMemo(() => pool.map(toRow).map((c) => ({ ...c, status: statusNow(c.id, c.status) })),
+    // `version` stands for the case store, which statusNow reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pool, version]);
+  const { open, drawer } = useCaseDrawer(pool, onMoved);
+
+  const counts: Record<QueueFilter, number> = { all: all.length, critical: 0, high: 0, medium: 0 };
+  const buckets: Record<Bucket, number> = { any: all.length, opencases: 0, untouched: 0, working: 0, awaiting: 0, closed: 0 };
+  for (const c of all) {
+    if (c.priority === 'critical' || c.priority === 'high' || c.priority === 'medium') counts[c.priority]++;
+    const b = bucketOf(c.status);
+    buckets[b]++;
+    if (b !== 'closed') buckets.opencases++;
+  }
+  const q = sortRows(all.filter((c) => (filter === 'all' || c.priority === filter) && inBucket(bucket, c.status)), sort);
+
+  // what needs attention today
+  const stale = all.filter((c) => c.age > 180 && !c.answered).length;
+  const top = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of all) for (const t of c.topics) m.set(t, (m.get(t) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1])[0];
+  }, [all]);
 
   return (
-    <ApiPage res={res}>
-      {(d) => {
-        const counts: Record<string, number> = { all: all.length, critical: 0, high: 0, medium: 0 };
-        all.forEach((c) => { if (counts[c.priority] !== undefined) counts[c.priority]++; });
-        const q = sortRows(filter === 'all' ? all : all.filter((c) => c.priority === filter), sort);
-        return (
-          <div className="panel">
-            <div className="chips">
-              {CHIPS.map(([k, label]) => (
-                <button key={k} className={filter === k ? 'on' : undefined} onClick={() => setFilter(k)}>
-                  {label} <span style={{ opacity: 0.6 }}>{counts[k] || 0}</span>
-                </button>
-              ))}
-            </div>
-            {d.page.total > all.length && (
-              <div className="p-note" style={{ marginBottom: 6, color: '#8E5310' }}>
-                Showing the {all.length} most critical of {d.page.total} cases.
-              </div>
-            )}
-            <div className="p-note" style={{ marginBottom: 6 }}>
-              Workflow status across every case in this view:{' '}
-              {Object.entries(d.facets.by_status).map(([s, n], i) => <span key={s}>{i > 0 && ' · '}<b>{n}</b> {s}</span>)}.
-            </div>
-            <div className="p-note" style={{ marginBottom: 12 }}>Criticality runs 0–100: topic severity weighted fifteen-fold, then rating severity, recency, reviewer reach (Local Guide status, lifetime review count, attached photo) and an unanswered penalty. Weights are configurable and need CX and compliance sign-off before this goes live.</div>
-            <div className="t-scroll">
-              <table>
-                <SortHead cols={COLS} sort={sort} onSort={(f) => setSort((s) => nextSort(s, f))} extra={<th />} />
-                <tbody>
-                  {q.length ? q.map((c) => (
-                    <tr key={c.id}>
-                      <td><Chip priority={c.priority} /></td>
-                      <td className="n" title={c.breakdown || undefined}>
-                        <b>{c.score}</b>
-                        {c.breakdown && <div className="sub" style={{ whiteSpace: 'nowrap' }}>{c.breakdown}</div>}
-                      </td>
-                      <td className="n"><span className={`tag s${c.severity}`}>{c.severity}</span></td>
-                      <td>
-                        <SourceBadge source={c.source} />
-                        <div className="sub">{c.where}{c.stars ? <><br /><Rating stars={c.stars} /></> : null}</div>
-                      </td>
-                      <td className="mono">{c.date}</td>
-                      <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>{c.age}d</td>
-                      <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
-                      <td>
-                        <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>{c.text ? c.text.slice(0, 420) : <NoText />}</div>
-                        <div style={{ marginTop: 6 }}>
-                          <Tags topics={c.topics} />
-                          {c.sentiment && <span className="sub" style={{ marginLeft: 6 }}>{c.sentiment}</span>}
-                        </div>
-                      </td>
-                      <td>{c.who}{c.meta && <div className="sub">{c.meta}</div>}</td>
-                      <td>{c.url && <a className="link" href={c.url} target="_blank" rel="noopener">Open</a>}</td>
-                    </tr>
-                  )) : <EmptyRow colSpan={COLS.length + 1}>No cases match this filter.</EmptyRow>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      }}
-    </ApiPage>
+    <div className="panel">
+      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <Chips options={CHIPS} value={filter} onPick={setFilter} counts={counts} />
+        <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--rule)', margin: '0 4px 14px' }} />
+        <Chips options={BUCKETS} value={bucket} onPick={setBucket} counts={buckets} />
+      </div>
+      {list.partial && (
+        <div className="p-note" style={{ marginBottom: 6, color: '#8E5310' }}>
+          Showing the {list.items.length.toLocaleString('id-ID')} most critical of {list.total.toLocaleString('id-ID')} cases. Narrow the scope or the period to reach the rest.
+        </div>
+      )}
+      <div className="p-note" style={{ marginBottom: 12 }}>Criticality runs 0–100: topic severity weighted fifteen-fold, then rating severity, recency, reviewer reach (Local Guide status, lifetime review count, attached photo) and an unanswered penalty. Weights are configurable and need CX and compliance sign-off before this goes live.</div>
+      {all.length > 0 && (
+        <AiNote title="What needs attention today">
+          {all.length} open {plural(all.length, 'case', 'cases')}, {counts.critical} critical.{' '}
+          {top ? `${topic(top[0])?.label ?? top[0]} is the most common theme, on ${top[1]} of them. ` : ''}
+          {stale
+            ? `${fmt(stale)} ${plural(stale, 'has', 'have')} been public and unanswered for more than six months — those are the ones that read as neglect rather than error.`
+            : 'Nothing has been sitting unanswered beyond six months.'}
+        </AiNote>
+      )}
+      <div className="t-scroll q-table" style={{ marginTop: 14 }}>
+        <table>
+          <SortHead cols={COLS} sort={sort} onSort={(f) => setSort((s) => nextSort(s, f))} extra={<th>Action</th>} />
+          <tbody>
+            {q.length ? q.map((c) => (
+              <tr key={c.id} className="clickable" onClick={() => open(c.id)}>
+                <td><Chip priority={c.priority} /></td>
+                <td className="n" title={c.breakdown || undefined}>
+                  <b>{c.score}</b>
+                  {c.breakdown && <div className="sub q-break">{c.breakdown}</div>}
+                </td>
+                <td className="n"><span className={`tag s${c.severity}`}>{c.severity}</span></td>
+                <td><StatusPill id={c.id} status={c.status} /></td>
+                <td>
+                  <SourceBadge source={c.source} />
+                  <div className="sub">{c.where}{c.stars ? <><br /><Rating stars={c.stars} /></> : null}</div>
+                </td>
+                <td className="mono" style={{ whiteSpace: 'nowrap' }}>{c.date.slice(0, 10)}</td>
+                <td className="n" style={c.age > 180 ? { color: T.sig } : undefined}>
+                  {c.age}d
+                  {c.sla && <div className="sub" style={{ whiteSpace: 'nowrap', color: c.sla.breached ? T.sig : undefined, fontWeight: c.sla.breached ? 600 : undefined }}>SLA {slaLabel(c.sla)}</div>}
+                </td>
+                <td style={c.answered ? undefined : { color: T.sig, fontWeight: 600 }}>{c.answered ? 'answered' : 'never'}</td>
+                <td className="q-case">
+                  <div className="quote" style={{ whiteSpace: 'pre-wrap' }}>
+                    {c.text ? <CaseText text={c.text} /> : <NoText />}
+                    {c.url && (
+                      <a className="open-link" href={c.url} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
+                        title="Open the original review" aria-label="Open the original review">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M14 4h6v6M20 4l-8.6 8.6M18 14.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3.5" />
+                        </svg>
+                      </a>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <Tags topics={c.topics} />
+                    {c.sentiment && <span className="sub" style={{ marginLeft: 6 }}>{c.sentiment}</span>}
+                  </div>
+                </td>
+                <td>{c.who}{c.meta && <div className="sub">{c.meta}</div>}</td>
+                <td><button className="btn2" style={{ padding: '5px 11px' }}>Handle</button></td>
+              </tr>
+            )) : <EmptyRow colSpan={COLS.length + 1}>No cases match this filter.</EmptyRow>}
+          </tbody>
+        </table>
+      </div>
+      {drawer}
+    </div>
+  );
+}
+
+/** The case's status: what was done in this session if it has been touched, otherwise what the API last reported. */
+function StatusPill({ id, status }: { id: string; status: string }) {
+  const s = useCase(id);
+  const now = s.trail.length ? s.status : status;
+  const known = STATE[asState(now)];
+  const tone = known?.tone;
+  const color = tone === 'ok' ? 'var(--grow)' : tone === 'bad' ? T.sig : tone === 'warn' ? 'var(--warn)' : 'var(--ink-3)';
+  return <span className="sub" style={{ color, fontWeight: 600, whiteSpace: 'nowrap', marginTop: 0 }}>{known?.label ?? now}</span>;
+}
+
+/** Past this many characters a review is cut in the row, with a toggle that reads the rest in place. */
+const CUT = 320;
+
+/** The whole review, folded when it is long so one case does not fill the screen. */
+function CaseText({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  if (text.length <= CUT) return <>{text}</>;
+  return (
+    <>
+      {all ? text : `${text.slice(0, CUT).trimEnd()}…`}{' '}
+      <button className="link-btn" onClick={(e) => { e.stopPropagation(); setAll((v) => !v); }}>
+        {all ? 'Show less' : 'Read all'}
+      </button>
+    </>
   );
 }

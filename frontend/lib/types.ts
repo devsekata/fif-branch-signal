@@ -75,6 +75,50 @@ export interface ConfigResponse {
   };
   priority_thresholds: Record<Channel, { critical: number; high: number; medium: number }>;
   known_limits: { id: string; applies_to: Channel[]; text: string }[];
+  /** Hours a case of each priority has before it is overdue. */
+  sla_hours?: Record<string, number>;
+  /** Null until the classifier has been measured against a labelled set: unknown, not zero. */
+  classifier_accuracy?: ClassifierAccuracy | null;
+}
+
+export interface AccuracyBand { n: number; precision: number | null; recall: number | null; f1: number | null }
+export interface ClassifierAccuracy {
+  classifier_version: string;
+  taxonomy_version: string;
+  set_version: string;
+  evaluated_at: string;
+  overall: AccuracyBand | null;
+  by_severity: (AccuracyBand & { severity: number })[];
+}
+
+/* ---------- /v1/areas/branches ---------- */
+export interface AreaBranchRow {
+  branch_id: string;
+  branch: string;
+  city: string;
+  address: string | null;
+  /** Null when the address names no kecamatan held in the master tables. */
+  kecamatan_id: number | null;
+  kecamatan: string | null;
+  kabkota_id: number | null;
+  kabkota: string | null;
+  provinsi_id: number | null;
+  provinsi: string | null;
+  placed_by: 'address' | null;
+  /** The kecamatan the address names, kept even when the master tables do not hold it. */
+  stated_kecamatan: string | null;
+  total: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+  never_answered: number;
+  sentiment_score: number | null;
+}
+
+export interface AreaBranchesResponse {
+  context: ApiContext;
+  summary: { branches: number; placed: number; kecamatan: number };
+  rows: AreaBranchRow[];
 }
 
 /* ---------- /v1/pages/overview ---------- */
@@ -155,14 +199,18 @@ export interface ComplaintsResponse {
   topic_by_branch: { branches: string[]; matrix: { topic_id: string; counts: number[] }[] };
   sentiment_mix: { positive: number; neutral: number; negative: number; no_text_or_reaction: number };
   terms_negative: { term: string; n: number }[];
+  /** Words of praise counted over every review; absent on an API that does not read l1_gold.terms_positive. */
+  terms_positive?: { term: string; n: number }[];
   praise_drivers: { topic_id: string; label: string; n: number; by_branch: Record<string, number> }[];
+  /** Questions by subject. Counted only for the subjects the relevance classifier names; the rest are zero. */
+  neutral_topics?: { topic_id: string; label: string; google: number; instagram: number }[];
 }
 
 /* ---------- /v1/pages/integrity ---------- */
 /** ASSUMED shape. */
 export interface CollectionDay { branch: string; date: string; n: number; avg: number; notext: number }
-/** ASSUMED shape. */
-export interface DuplicateSet { text: string; users: string[]; n: number }
+/** The API sends `accounts` and `count`; the prototype called them `users` and `n`. Both are read. */
+export interface DuplicateSet { text: string; users?: string[]; n?: number; accounts?: string[]; count?: number; window_minutes?: number }
 
 export interface IntegrityResponse {
   context: ApiContext;
@@ -175,6 +223,7 @@ export interface IntegrityResponse {
     posting_hours: number[];
     collection_days: CollectionDay[];
     repeat_reviewers: number;
+    repeat_reviewers_note?: string;
     spam_count: number;
     duplicate_count: number;
     suspicious_accounts: number;
@@ -192,14 +241,15 @@ export interface IntegrityResponse {
 }
 
 /* ---------- /v1/pages/social ---------- */
-/** ASSUMED shape. */
+/* The API has renamed these fields since the prototype (`user` became `author`, `ts` became
+ * `posted_at`, and so on). `lib/social.ts` reads either spelling and hands the views this shape. */
 export interface SocialReply { user: string; text: string; ts: string; is_brand: boolean }
-/** ASSUMED shape. */
 export interface SocialThread {
   id: string;
   user: string;
   text: string;
   ts: string;
+  age: number;
   likes: number;
   declared: number;
   captured: number;
@@ -207,12 +257,18 @@ export interface SocialThread {
   brand_replied: boolean;
   latency_h: number | null;
   pile_on: boolean;
+  followups_after_brand: number;
   topics: string[];
+  severity: number;
+  sentiment: string;
   is_complaint: boolean;
   criticality: number;
   priority: Priority;
+  url: string | null;
   replies: SocialReply[];
 }
+
+export interface SocialTopic { topic: string; sev: number; n: number; answered: number; last: string | null }
 
 export interface SocialResponse {
   context: ApiContext;
@@ -233,9 +289,7 @@ export interface SocialResponse {
   };
   threads: SocialThread[];
   response_funnel: { complaints: number; answered: number; no_followup: number };
-  /** ASSUMED shape. */
-  topics: { topic: string; sev: number; n: number; answered: number; last: string }[];
-  /** ASSUMED shape. */
+  topics: SocialTopic[];
   weekly: { week: string; n: number; comp: number }[];
 }
 
@@ -243,7 +297,7 @@ export interface SocialResponse {
 export interface CaseItem {
   case_id: string;
   source: Channel;
-  channel_ref: { branch_id?: string; branch?: string; place_id?: string };
+  channel_ref: { branch_id?: string; branch?: string; place_id?: string; post_id?: string; thread_id?: string; account_handle?: string };
   posted_at: string;
   age_days: number;
   stars: number | null;
@@ -255,11 +309,49 @@ export interface CaseItem {
   /** How criticality was reached. Sent by the API but not described in the spec. */
   score_components?: Partial<Record<'severity' | 'rating' | 'recency' | 'reach' | 'unanswered', number>>;
   priority: Priority;
-  author: { display: string | null; lifetime_reviews: number | null; local_guide: boolean | null; has_photo: boolean | null };
+  author: { display: string | null; lifetime_reviews: number | null; local_guide: boolean | null; has_photo: boolean | null; photos?: number | null };
   brand_replied: boolean;
   first_response_h: number | null;
   permalink: string | null;
-  workflow: { status: string; owner: string | null; updated_at: string | null };
+  workflow: {
+    status: string; owner: string | null; updated_at: string | null;
+    /** Which handling track the API put the case on, and where it stands on it. */
+    track?: string; state?: string;
+    /** Null until the case has been given a deadline. */
+    sla_deadline?: string | null; sla_breached?: boolean; sla_remaining_h?: number | null;
+  };
+}
+
+/* ---------- POST /v1/jobs ---------- */
+export type JobType = 'google-reviews-ingest' | 'instagram-comments-ingest';
+export type JobStatus = 'pending' | 'processing' | 'finished' | 'failed';
+
+export interface CreateJobRequest {
+  job_type: JobType;
+  /** Worker parameters. The spec types this as a free-form object and documents one example per job type. */
+  payload: Record<string, unknown>;
+  max_attempts?: number;
+  run_at?: string;
+}
+
+export interface JobQueueItem {
+  id: string;
+  jobType: string;
+  status: JobStatus;
+  payload: Record<string, unknown>;
+  attempts: number;
+  maxAttempts: number;
+  runAt: string;
+  createdAt: string;
+  /** Returned by the API on 24 Sep 2026 but absent from the spec's JobQueueItem schema. */
+  startedAt?: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+/** 422 body. `detail` is free-form, so it is rendered as JSON rather than parsed. */
+export interface ApiError {
+  error: { code: string; message: string; detail?: unknown };
 }
 
 export interface CasesResponse {
@@ -272,4 +364,146 @@ export interface CasesResponse {
     by_topic: Record<string, number>;
   };
   items: CaseItem[];
+}
+
+/* ---------- /v1/signal/* ---------- */
+/** Positive, neutral, negative and the 0–100 score built on them. `score` is null when nothing was read. */
+/** `irrelevant` is the fourth category: items the relevance classifier marked irrelevant or spam, kept out of `total` and `score`. */
+export interface Mix { good: number; neutral: number; bad: number; total: number; score: number | null; irrelevant: number }
+
+export interface SignalMonth extends Mix {
+  month: string;
+  reviews: number;
+  google_complaints: number;
+  instagram_complaints: number;
+  avg_rating: number | null;
+}
+
+export interface SignalOverviewResponse {
+  context: ApiContext;
+  min_n: number;
+  mix: Mix;
+  mix_by_source: Record<Channel, Mix>;
+  neutral_rating_only: number;
+  /** Text the relevance classifier read as a question. */
+  neutral_questions?: number;
+  /** The irrelevant/spam items by the reason the relevance classifier gave, largest first. */
+  irrelevant_reasons?: { reason: string; n: number }[];
+  headline: {
+    items_read: number;
+    complaints: number;
+    complaint_rate_pct: number;
+    open_cases: number;
+    conduct_level: number;
+    never_answered: number;
+    oldest_unanswered_days: number;
+    by_priority: Record<'critical' | 'high' | 'medium' | 'low', number>;
+  };
+  longest_unanswered: { case_id: string; source: Channel; label: string; stars: number | null; excerpt: string; age_days: number }[];
+  monthly: SignalMonth[];
+  severity_mix: { source: Channel; complaints: number; by_severity: Record<string, number> }[];
+  collection: { reviews: number; five_star_pct: number; one_star_pct: number; no_text_pct: number; first_time_account_pct: number };
+}
+
+/* ---------- GET /v1/pages/listings ---------- */
+export type ListingStatus = 'matched' | 'duplicate' | 'unrecognised' | 'no_listing';
+
+export interface ListingRow {
+  /** Null on `no_listing` by definition. */
+  listing_id: string | null;
+  name: string;
+  city: string | null;
+  status: ListingStatus;
+  /** The master's code. Null on `unrecognised` by definition. */
+  branch_code: string | null;
+  master_name: string | null;
+  province: string | null;
+  kota: string | null;
+  kecamatan: string | null;
+  reviews: number;
+  rating: number | null;
+  /** Null is unknown, not false. */
+  managed: boolean | null;
+  /** What fired the flag. Empty on matched rows only. */
+  evidence: string[];
+  twin_of: string | null;
+  url: string | null;
+  seeded: boolean;
+}
+
+export interface ListingsResponse {
+  context: ApiContext;
+  meta: {
+    master_is_simulated: boolean;
+    master_note: string;
+    seeded_note: string;
+    name_threshold: number;
+    distance_threshold_m: number;
+    signals_available: string[];
+    signals_missing: string[];
+  };
+  counts: Record<ListingStatus, number>;
+  summary: { listings_found: number; master_entries: number; reviews_on_listings: number; reviews_off_master: number; reviews_off_master_pct: number };
+  rows: ListingRow[];
+}
+
+export interface SignalBranch extends Mix {
+  branch_id: string;
+  branch: string;
+  city: string;
+  address: string | null;
+  province: string | null;
+  kota: string | null;
+  kecamatan: string | null;
+  stated_kecamatan: string | null;
+  /** False when the area names come from Google's place data rather than the master tables, which hold no boundary for them. */
+  in_master: boolean;
+  lat: number | null;
+  lng: number | null;
+  postal_code: string | null;
+  /** Null until the branch has been synced with Google's place details. */
+  phone?: string | null;
+  /** The owner's average hours to a first reply; null where no reply has a date. */
+  avg_response_hours?: number | null;
+  /** Google's opening hours; an empty array when Google publishes none. */
+  opening_hours?: { weekdayDescriptions?: string[] } | unknown[] | null;
+  google_score: number | null;
+  reviews_universe: number | null;
+  reviews_read: number;
+  coverage_pct: number | null;
+  enough: boolean;
+  /** Position among the scored branches of the response, best first. */
+  rank: number | null;
+  unanswered: number;
+  avg_rating: number | null;
+  complaints: number;
+  complaint_rate_pct: number;
+  /** The complaint rate shrunk toward risk_prior, (c + m·p) / (n + m): the rate the risk score reads. */
+  complaint_rate_adj_pct?: number;
+  critical_high: number;
+  conduct_flags: number;
+  oldest_open_days: number;
+  rating_only_pct: number;
+  new_account_pct: number;
+  risk_score: number;
+  rating_mix: [number, number, number, number, number];
+}
+
+export interface SignalArea extends Mix {
+  name: string;
+  province: string | null;
+  kota: string | null;
+  enough: boolean;
+  branches: number;
+  unanswered: number;
+  in_master: boolean;
+}
+
+export interface SignalBranchesResponse {
+  context: ApiContext;
+  min_n: number;
+  /** What the risk score shrinks each complaint rate toward: m reviews' weight at rate p. */
+  risk_prior?: { m: number; p: number; p_from_full_range: boolean };
+  branches: SignalBranch[];
+  areas: Record<'province' | 'kota' | 'kecamatan', SignalArea[]>;
 }

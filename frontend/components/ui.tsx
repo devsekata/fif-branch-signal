@@ -1,9 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { ApiResult } from '@/lib/api';
+import { page, type PageId } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import type { SortState } from '@/lib/scope';
+import type { Mix } from '@/lib/signal';
+import { IRRELEVANT, NEUTRAL, T, fmt } from '@/lib/theme';
 import type { Channel, Priority } from '@/lib/types';
 
 export function Rating({ stars }: { stars: number }) {
@@ -35,12 +39,95 @@ export function Tags({ topics }: { topics: string[] | undefined }) {
   });
 }
 
-export function Metric({ k, v, n }: { k: ReactNode; v: ReactNode; n: ReactNode }) {
+export function Metric({ k, v, n, color, small }: { k: ReactNode; v: ReactNode; n?: ReactNode; color?: string; small?: boolean }) {
   return (
-    <div className="metric">
+    <div className="metric" style={small ? { padding: '11px 13px' } : undefined}>
       <div className="k">{k}</div>
-      <div className="v">{v}</div>
-      <div className="n">{n}</div>
+      <div className="v" style={{ color, fontSize: small ? 22 : undefined }}>{typeof v === 'number' ? fmt(v) : v}</div>
+      {n ? <div className="n">{n}</div> : null}
+    </div>
+  );
+}
+
+/** One way to draw a small set of choices: anything with two to five options is chips. */
+export function Chips<V extends string>({ options, value, onPick, counts, flush, oneLine }: {
+  options: readonly (readonly [V, string])[];
+  value: V;
+  onPick: (v: V) => void;
+  counts?: Partial<Record<V, number>>;
+  /** Sits in a panel head, so it carries no bottom margin. */
+  flush?: boolean;
+  /** Never wraps: on a narrow screen the labels are cut short with an ellipsis instead. */
+  oneLine?: boolean;
+}) {
+  /* On one line only the longest label gives way; the shorter ones stay whole. */
+  const longest = oneLine ? options.reduce((a, o) => (o[1].length > a.length ? o[1] : a), '') : null;
+  return (
+    <div className={oneLine ? 'chips one-line' : 'chips'} style={flush ? { margin: 0 } : undefined}>
+      {options.map(([v, label]) => (
+        <button key={v} className={value === v ? 'on' : undefined} onClick={() => onPick(v)}
+          title={oneLine ? label : undefined} style={oneLine ? { flexShrink: label === longest ? 1 : 0 } : undefined}>
+          {label}{counts && <> <span style={{ opacity: 0.6 }}>{counts[v] ?? 0}</span></>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Positive, neutral, negative and irrelevant/spam as one bar, so the mix reads before the numbers do. */
+export function MixBar({ mix, height = 9 }: { mix: Mix; height?: number }) {
+  const all = mix.total + mix.irrelevant;
+  const w = (v: number) => `${all ? (100 * v) / all : 0}%`;
+  return (
+    <div className="sent-bar" style={{ height }} role="img"
+      aria-label={`${fmt(mix.good)} positive, ${fmt(mix.neutral)} neutral, ${fmt(mix.bad)} negative, ${fmt(mix.irrelevant)} irrelevant or spam of ${fmt(all)}`}>
+      <i style={{ width: w(mix.good), background: T.grow }} />
+      <i style={{ width: w(mix.neutral), background: NEUTRAL }} />
+      <i style={{ width: w(mix.bad), background: T.sig }} />
+      <i style={{ width: w(mix.irrelevant), background: IRRELEVANT }} />
+    </div>
+  );
+}
+
+/** A sentence or two read off the numbers on the panel above it. */
+export function AiNote({ title, children }: { title: string; children: ReactNode }) {
+  return <div className="ai-note"><b>{title}</b>{children}</div>;
+}
+
+export function Formula() {
+  return <span className="formula">score = <b>(positive − negative) ÷ total</b>, mapped to 0–100</span>;
+}
+
+/** A panel the layout has a place for, whose numbers the API does not return yet. */
+export function Pending({ children }: { children: ReactNode }) {
+  return <div className="pending"><b>Waiting on the API</b>{children}</div>;
+}
+
+/* Each page ends by handing the reader to the page that answers the next question. Escalations is the end of the chain. */
+const BRIDGE: Partial<Record<PageId, { q: string; d: string; to: PageId }>> = {
+  overview: { q: 'So where is it happening, and is the complaint the same everywhere?',
+    d: 'The map answers where. Complaint themes answers whether the problem is local coaching or a head-office process.', to: 'geography' },
+  geography: { q: 'Which branch inside that area is driving it?',
+    d: 'Area & Branch narrows province to kota to kecamatan to a single branch, with the sentiment behind each score.', to: 'branches' },
+  branches: { q: 'What are these branches actually being told?',
+    d: 'Complaint themes groups the text by category and severity across both channels.', to: 'complaints' },
+  complaints: { q: 'Can the rating even be trusted as a satisfaction signal?',
+    d: 'Review integrity shows how much of the score was collected at the counter rather than written at home.', to: 'integrity' },
+  integrity: { q: 'And can the branch list itself be trusted?',
+    d: 'Listing integrity reconciles what is on Google against the branch master: duplicates splitting the reviews, listings nobody manages, and branches with no listing at all.', to: 'listings' },
+  listings: { q: 'Which cases need a person this week?',
+    d: 'Escalations ranks every open case across both channels on one criticality score.', to: 'escalations' },
+};
+
+export function Bridge({ from }: { from: PageId }) {
+  const b = BRIDGE[from];
+  if (!b) return null;
+  const to = page(b.to);
+  return (
+    <div className="bridge">
+      <span className="q">Next question</span>
+      <span className="d"><b style={{ color: 'var(--ink)' }}>{b.q}</b> {b.d}</span>
+      <Link href={to.href}>Open {to.label}</Link>
     </div>
   );
 }
@@ -49,7 +136,7 @@ export function Stat({ k, v, n, bad }: { k: ReactNode; v: ReactNode; n: ReactNod
   return (
     <div className="stat">
       <div className="k">{k}</div>
-      <div className={bad ? 'v sig' : 'v'}>{v}</div>
+      <div className={bad ? 'v sig' : 'v'}>{typeof v === 'number' ? fmt(v) : v}</div>
       <div className="n">{n}</div>
     </div>
   );

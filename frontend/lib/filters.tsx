@@ -3,13 +3,20 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { PeriodFilter, SourceFilter } from './types';
 
+export const LEVELS = ['province', 'kota', 'kecamatan', 'branch'] as const;
+export type Level = (typeof LEVELS)[number];
+
+/** One hierarchy selection; the deepest level set is the one that applies. `branch` holds a branch id, the rest hold names. */
+export type ScopeSel = Record<Level, string | null>;
+export const NO_SCOPE: ScopeSel = { province: null, kota: null, kecamatan: null, branch: null };
+
 export interface Filters {
-  branch: string;
+  scope: ScopeSel;
   period: PeriodFilter;
   source: SourceFilter;
 }
 
-const INITIAL: Filters = { branch: 'all', period: 'all', source: 'all' };
+const INITIAL: Filters = { scope: NO_SCOPE, period: 'all', source: 'all' };
 
 interface FiltersValue {
   filters: Filters;

@@ -6,13 +6,27 @@ export const STAR = ['#C8322B', '#D8801F', '#B08F2A', '#8CCFC9', '#17857C'];
 export const IG = '#7A3A66';
 export const PRI: Record<string, string> = { critical: T.sig, high: T.warn, medium: T.hold, low: T.calm };
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** `2026-09` as `Sep '26`. */
+export const monthLabel = (month: string) => { const [y, mm] = month.split('-'); return `${MONTHS[+mm - 1]} '${y.slice(2)}`; };
+
+/** Neutral bar in every three-way split. */
+export const NEUTRAL = '#D3DFDD';
+/** Irrelevant/spam: the fourth sentiment category, darker than neutral so the two do not merge. */
+export const IRRELEVANT = '#7C9491';
 
 export const riskColor = (risk: number) => (risk >= 45 ? T.sig : risk >= 25 ? T.warn : T.grow);
 export const sevColor = (sev: number) => (sev === 4 ? T.sig : sev === 3 ? T.warn : T.calm);
 
 /** Single-line excerpt with an ellipsis when cut. */
 export const clip = (text: string, n: number) => text.replace(/\n+/g, ' ').slice(0, n) + (text.length > n ? '…' : '');
+/** A branch name for a chart axis: "FIFGROUP - Bandung II" reads as "Bandung II", and anything still long is cut. Show the full name on hover. */
+export const shortBranch = (name: string, max = 22) => {
+  const s = name.replace(/^FIF\s*GROUP\s*[-–]\s*/i, '');
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+};
 export const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+/** A count with Indonesian thousands separators: 1.499, 14.204. */
+export const fmt = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('id-ID'));
 export const pct = (part: number, whole: number) => Math.round((100 * part) / Math.max(1, whole));
 
 /** ISO timestamp as "YYYY-MM-DD HH:mm WIB". */

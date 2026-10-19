@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox';
-import { ApiPage, EmptyRow, Metric, PanelHead, SortHead, type Col } from '@/components/ui';
+import { ApiPage, Bridge, EmptyRow, Metric, PanelHead, SortHead, type Col } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { useReference } from '@/lib/reference';
-import { nextSort, sortRows, useScope, type SortState } from '@/lib/scope';
-import { T, plural } from '@/lib/theme';
-import type { CollectionDay, IntegrityResponse } from '@/lib/types';
+import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
+import { dupCount, dupUsers } from '@/lib/social';
+import { T, plural, fmt } from '@/lib/theme';
+import type { CollectionDay, IntegrityResponse, SignalOverviewResponse } from '@/lib/types';
 
 type BurstKey = keyof CollectionDay & string;
 
@@ -15,53 +16,67 @@ const BURST_COLS: Col<BurstKey>[] = [['date', 'Date', false], ['branch', 'Branch
 const inHours = (h: number) => h >= 8 && h <= 16;
 
 export function IntegrityView() {
-  const { scope, params } = useScope('integrity');
-  const res = useApi<IntegrityResponse>('/v1/pages/integrity', params);
+  const view = useView('integrity');
+  const res = useApi<IntegrityResponse>('/v1/pages/integrity', view.params);
+  /* Collection days and posting hours come precomputed, and the API narrows them by one branch only. */
+  const wide = view.isSet && !view.sel.branch;
+  const bursts = useMemo(() => {
+    const names = wide ? new Set(view.places.map((p) => p.name)) : null;
+    return (res.data?.google.collection_days ?? []).filter((r) => !names || names.has(r.branch));
+  }, [res.data, wide, view.places]);
+  /* The shares at the top follow the scope at every level, which the integrity payload cannot. */
+  const collection = useApi<SignalOverviewResponse>(view.useG ? '/v1/signal/overview' : null, { ...view.sig, source: 'google' }).data?.collection;
   return (
     <ApiPage res={res}>
       {(d) => (
         <>
-          {scope.useG && <GoogleSummary g={d.google} />}
-          {scope.useS && <InstagramIntegrity ig={d.instagram} />}
-          {scope.useG && (
-            <div className="grid g-2">
+          {view.useG && <GoogleSummary c={collection} g={d.google} big={bursts[0]} wide={wide} />}
+          {view.useS && <InstagramIntegrity view={view} ig={d.instagram} />}
+          {view.useG && (
+            <div className="grid g-2 mb">
               <div className="panel">
                 <PanelHead title="Suspected collection days" />
                 <div className="p-note">Days where a single branch gathered five or more reviews averaging 4.5 stars or better. Campaigns are not misconduct, but they inflate the public score and bury complaint trends, so they have to be separated from organic volume.</div>
-                <Bursts rows={d.google.collection_days} />
+                <Bursts rows={bursts} />
               </div>
               <div className="panel">
                 <PanelHead title="Hour a review was posted" />
                 <div className="p-note">Reviews written at home scatter across the evening. Reviews collected at the service counter cluster inside operating hours, which is what this chart shows.</div>
+                {wide && <div className="sim" style={{ marginBottom: 10 }}><span>⚠</span><span>Posting hours cover every branch: the API narrows them by a single branch, not by {view.cur.level}.</span></div>}
                 <HourChart hours={d.google.posting_hours} />
               </div>
             </div>
           )}
+          <Bridge from="integrity" />
         </>
       )}
     </ApiPage>
   );
 }
 
-function GoogleSummary({ g }: { g: IntegrityResponse['google'] }) {
-  const big = g.collection_days[0];
+function GoogleSummary({ c, g, big, wide }: { c: SignalOverviewResponse['collection'] | undefined; g: IntegrityResponse['google']; big: CollectionDay | undefined; wide: boolean }) {
+  /* Until the scoped figures arrive, the payload's own unscoped ones stand in. */
+  const five = (c?.five_star_pct ?? g.five_star_pct).toFixed(0);
+  const one = (c?.one_star_pct ?? g.one_star_pct).toFixed(0);
+  const notext = (c?.no_text_pct ?? g.no_text_pct).toFixed(0);
+  const firstTime = (c?.first_time_account_pct ?? g.first_time_account_pct).toFixed(0);
   return (
     <>
       <div className="panel mb" style={{ borderColor: '#EFD7D4' }}>
         <PanelHead title="The public score is a collection artefact" />
         <p className="p-note" style={{ marginBottom: 0 }}>
-          In this view, {g.five_star_pct.toFixed(0)}% of reviews are five stars against {g.one_star_pct.toFixed(0)}% at one star,{' '}
-          {g.no_text_pct.toFixed(0)}% carry no text at all, {g.first_time_account_pct.toFixed(0)}% come from accounts holding one review or fewer in their lifetime,{' '}
-          and {Math.round(g.office_hours_pct)}% were posted inside branch operating hours.{' '}
-          {big ? `${big.branch} collected ${big.n} reviews on ${big.date} alone, ${big.notext} of them wordless. ` : ''}
+          In this view, {five}% of reviews are five stars against {one}% at one star,{' '}
+          {notext}% carry no text at all, {firstTime}% come from accounts holding one review or fewer in their lifetime,{' '}
+          and {Math.round(g.office_hours_pct)}% were posted inside branch operating hours{wide ? ' across all branches' : ''}.{' '}
+          {big ? `${big.branch} collected ${fmt(big.n)} reviews on ${big.date} alone, ${fmt(big.notext)} of them wordless. ` : ''}
           Treat the public average as a measure of how hard a branch asks, and judge service on the complaint side instead.
         </p>
       </div>
       <div className="grid g-4 mb">
-        <Metric k="Five-star share" v={g.five_star_pct.toFixed(0) + '%'} n={`against ${g.one_star_pct.toFixed(0)}% at one star`} />
-        <Metric k="No text" v={g.no_text_pct.toFixed(0) + '%'} n="a tap, not a review" />
-        <Metric k="One-review accounts" v={g.first_time_account_pct.toFixed(0) + '%'} n="created or used once" />
-        <Metric k="Repeat reviewers found" v={g.repeat_reviewers} n="Google permits one review per account per place" />
+        <Metric k="Five-star share" v={five + '%'} n={`against ${one}% at one star`} />
+        <Metric k="No text" v={notext + '%'} n="a tap, not a review" />
+        <Metric k="One-review accounts" v={firstTime + '%'} n="created or used once" />
+        <Metric k="Repeat reviewers found" v={g.repeat_reviewers} n={g.repeat_reviewers ? 'accounts that reviewed more than one branch' : 'Google permits one review per account per place'} />
       </div>
       <Flags
         label="What the integrity scan flagged on Google"
@@ -78,7 +93,7 @@ function Flags({ label, items }: { label: string; items: [string, number][] }) {
     <div className="p-note mb">
       <b>{label}:</b>{' '}
       {hits.length
-        ? items.map(([k, n], i) => <span key={k}>{i > 0 && ' · '}{k} <b style={{ color: n > 0 ? T.sig : undefined }}>{n}</b></span>)
+        ? items.map(([k, n], i) => <span key={k}>{i > 0 && ' · '}{k} <b style={{ color: n > 0 ? T.sig : undefined }}>{fmt(n)}</b></span>)
         : `nothing on any of ${items.length} checks (${items.map(([k]) => k.toLowerCase()).join(', ')}).`}
     </div>
   );
@@ -95,10 +110,10 @@ function Bursts({ rows }: { rows: CollectionDay[] }) {
             <tr key={r.branch + r.date}>
               <td className="mono">{r.date}</td>
               <td>{r.branch}</td>
-              <td className="n"><b>{r.n}</b></td>
+              <td className="n"><b>{fmt(r.n)}</b></td>
               <td className="n">{r.avg?.toFixed(2)}</td>
               <td className="n">
-                {r.notext}
+                {fmt(r.notext)}
                 <span className="sub" style={{ display: 'inline', marginLeft: 4 }}>{((100 * r.notext) / Math.max(1, r.n)).toFixed(0)}%</span>
               </td>
             </tr>
@@ -133,18 +148,24 @@ function HourChart({ hours }: { hours: number[] }) {
   return <ChartBox config={config} />;
 }
 
-function InstagramIntegrity({ ig }: { ig: IntegrityResponse['instagram'] }) {
+function InstagramIntegrity({ view, ig }: { view: View; ig: IntegrityResponse['instagram'] }) {
   const posts = useReference().source('instagram')?.posts;
   const dup = ig.duplicate_sets;
   return (
     <div className="panel mb">
       <PanelHead title="Coordinated posting on Instagram" />
       <div className="p-note">The equivalent question on social is not whether ratings were farmed, but whether a complaint is one person or a campaign wearing several accounts.</div>
+      {view.isSet && (
+        <div className="sim" style={{ marginBottom: 12 }}>
+          <span>⚠</span>
+          <span>The Google panels on this page are scoped to <b>{view.scopeName}</b>. This one is not — Instagram comments carry no area, so it keeps showing all {fmt(ig.threads_read)} threads.</span>
+        </div>
+      )}
       <div className="grid g-4 mb">
         <Metric k="Identical comment sets" v={dup.length} n="same text, different accounts" />
         <Metric k="Accounts involved" v={ig.accounts_involved} n="posted within minutes of each other" />
         <Metric k="Reaction-only comments" v={ig.reaction_only_comments} n="emoji with no words, the social echo of a bare star" />
-        <Metric k="Threads read" v={ig.threads_read} n={posts != null ? `from ${posts} ${plural(posts, 'post', 'posts')}` : 'on the official account'} />
+        <Metric k="Threads read" v={ig.threads_read} n={posts != null ? `from ${fmt(posts)} ${plural(posts, 'post', 'posts')}` : 'on the official account'} />
       </div>
       <Flags
         label="What the integrity scan flagged on Instagram"
@@ -159,8 +180,8 @@ function InstagramIntegrity({ ig }: { ig: IntegrityResponse['instagram'] }) {
             {dup.map((dd, i) => (
               <tr key={i}>
                 <td><div className="quote" style={{ whiteSpace: 'pre-wrap' }}>{dd.text}</div></td>
-                <td className="n"><b>{dd.n}</b></td>
-                <td>{dd.users?.map((u, j) => <span key={u}>{j > 0 && <br />}@{u}</span>)}</td>
+                <td className="n"><b>{dupCount(dd)}</b></td>
+                <td>{dupUsers(dd).map((u, j) => <span key={u + j}>{j > 0 && <br />}@{u.replace(/^@/, '')}</span>)}</td>
               </tr>
             ))}
           </tbody>
