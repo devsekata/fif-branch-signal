@@ -5,7 +5,7 @@ import { AXIS, ChartBox, NOGRID, type ChartConfig } from '@/components/ChartBox'
 import { ApiPage, Bridge, EmptyRow, Metric, PanelHead, SortHead, type Col } from '@/components/ui';
 import { useApi } from '@/lib/api';
 import { useReference } from '@/lib/reference';
-import { nextSort, sortRows, useView, type SortState, type View } from '@/lib/scope';
+import { nextSort, scopeParams, sortRows, useView, type SortState, type View } from '@/lib/scope';
 import { dupCount, dupUsers } from '@/lib/social';
 import { T, plural, fmt } from '@/lib/theme';
 import type { CollectionDay, IntegrityResponse, SignalOverviewResponse } from '@/lib/types';
@@ -17,20 +17,16 @@ const inHours = (h: number) => h >= 8 && h <= 16;
 
 export function IntegrityView() {
   const view = useView('integrity');
-  const res = useApi<IntegrityResponse>('/v1/pages/integrity', view.params);
-  /* Collection days and posting hours come precomputed, and the API narrows them by one branch only. */
-  const wide = view.isSet && !view.sel.branch;
-  const bursts = useMemo(() => {
-    const names = wide ? new Set(view.places.map((p) => p.name)) : null;
-    return (res.data?.google.collection_days ?? []).filter((r) => !names || names.has(r.branch));
-  }, [res.data, wide, view.places]);
+  /* The Google panels follow the scope from province down to branch; the API aggregates an area live. */
+  const res = useApi<IntegrityResponse>('/v1/pages/integrity', { ...view.params, ...(view.useG ? scopeParams(view.sel) : {}) });
+  const bursts = res.data?.google.collection_days ?? [];
   /* The shares at the top follow the scope at every level, which the integrity payload cannot. */
   const collection = useApi<SignalOverviewResponse>(view.useG ? '/v1/signal/overview' : null, { ...view.sig, source: 'google' }).data?.collection;
   return (
     <ApiPage res={res}>
       {(d) => (
         <>
-          {view.useG && <GoogleSummary c={collection} g={d.google} big={bursts[0]} wide={wide} />}
+          {view.useG && <GoogleSummary c={collection} g={d.google} big={bursts[0]} />}
           {view.useS && <InstagramIntegrity view={view} ig={d.instagram} />}
           {view.useG && (
             <div className="grid g-2 mb">
@@ -42,7 +38,6 @@ export function IntegrityView() {
               <div className="panel">
                 <PanelHead title="Hour a review was posted" />
                 <div className="p-note">Reviews written at home scatter across the evening. Reviews collected at the service counter cluster inside operating hours, which is what this chart shows.</div>
-                {wide && <div className="sim" style={{ marginBottom: 10 }}><span>⚠</span><span>Posting hours cover every branch: the API narrows them by a single branch, not by {view.cur.level}.</span></div>}
                 <HourChart hours={d.google.posting_hours} />
               </div>
             </div>
@@ -54,7 +49,7 @@ export function IntegrityView() {
   );
 }
 
-function GoogleSummary({ c, g, big, wide }: { c: SignalOverviewResponse['collection'] | undefined; g: IntegrityResponse['google']; big: CollectionDay | undefined; wide: boolean }) {
+function GoogleSummary({ c, g, big }: { c: SignalOverviewResponse['collection'] | undefined; g: IntegrityResponse['google']; big: CollectionDay | undefined }) {
   /* Until the scoped figures arrive, the payload's own unscoped ones stand in. */
   const five = (c?.five_star_pct ?? g.five_star_pct).toFixed(0);
   const one = (c?.one_star_pct ?? g.one_star_pct).toFixed(0);
@@ -67,7 +62,7 @@ function GoogleSummary({ c, g, big, wide }: { c: SignalOverviewResponse['collect
         <p className="p-note" style={{ marginBottom: 0 }}>
           In this view, {five}% of reviews are five stars against {one}% at one star,{' '}
           {notext}% carry no text at all, {firstTime}% come from accounts holding one review or fewer in their lifetime,{' '}
-          and {Math.round(g.office_hours_pct)}% were posted inside branch operating hours{wide ? ' across all branches' : ''}.{' '}
+          and {Math.round(g.office_hours_pct)}% were posted inside branch operating hours.{' '}
           {big ? `${big.branch} collected ${fmt(big.n)} reviews on ${big.date} alone, ${fmt(big.notext)} of them wordless. ` : ''}
           Treat the public average as a measure of how hard a branch asks, and judge service on the complaint side instead.
         </p>
