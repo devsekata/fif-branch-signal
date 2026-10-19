@@ -95,7 +95,7 @@ function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n:
         ) : 'Nothing read in this view.'}
       </div>
       <div className="stat-rail tiles">
-        <Stat k="Sentiment score" v={score ?? '—'} n="(positive − (negative + neutral)) ÷ (positive + negative + neutral) × 100, a score between −50 and 0 taken as positive, irrelevant/spam left out" bad={score !== null && score < 50} />
+        <Stat k="Sentiment score" v={score ?? '—'} n="(positive − (negative + neutral)) ÷ (positive + negative + neutral) × 100, a negative score taken as positive, irrelevant/spam left out" bad={score !== null && score < 50} />
         <Stat k="Inbound Message" v={all.toLocaleString('id-ID')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
         <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={reasons || `${m.irrelevant.toLocaleString('id-ID')} set aside by the relevance check`} />
         <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('id-ID')} reviews and comments`} bad={share(m.bad, all) > 15} />

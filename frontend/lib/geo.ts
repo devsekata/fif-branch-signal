@@ -37,13 +37,13 @@ const mixOf = ({ good, neutral, bad, total, score, irrelevant }: Mix): Mix => ({
 
 /** The map's sentiment score: 100 × (positive − (negative + neutral)) ÷ (positive + negative + neutral), as the
  *  sentiment sheet computes it. Unlike the API score a neutral review counts against the area, so only praise
- *  lifts it. A score between −50 and 0 is taken as its absolute value (−22 reads 22); −50 or lower stays
- *  negative and is coloured as the lowest band. Used by the Geography and Overview pages. */
+ *  lifts it. A negative score is taken as its absolute value (−22 reads 22, −60 reads 60).
+ *  Used by the Geography and Overview pages. */
 export const mapScoreOf = ({ good, neutral, bad }: Pick<Mix, 'good' | 'neutral' | 'bad'>) => {
   const total = good + neutral + bad;
   if (!total) return null;
   const score = Math.round((1000 * (good - (bad + neutral))) / total) / 10;
-  return score < 0 && Math.abs(score) < 50 ? Math.abs(score) : score;
+  return Math.abs(score);
 };
 
 /** The same figures with the map's score in place of the API's. */

@@ -310,7 +310,7 @@ function Legend({ metric, points, polygons, items }: { metric: GeoMetric; points
         ))}
         {polygons && <span><span className="swatch hatch" />under {MIN_N} reviews, not scored</span>}
         {points && <PointKey />}
-        <span className="formula">score = <b>(positive − (negative + neutral)) ÷ (positive + negative + neutral)</b> × 100, a score between −50 and 0 taken as positive</span>
+        <span className="formula">score = <b>(positive − (negative + neutral)) ÷ (positive + negative + neutral)</b> × 100, a negative score taken as positive</span>
       </div>
     );
   }
