@@ -36,7 +36,8 @@ const WATCH_AT = 35;
 const FAKE: CheckId[] = ['ai_generated', 'tampered'];
 
 interface CheckedItem { kind: 'phone' | 'account' | 'link' | 'handle' | 'text'; value: string; status: 'conflict' | 'ok' | 'unverifiable'; note: string }
-interface Verdict { score: number; reason: string; suspect_areas?: string[]; signals?: string[]; needs_checking?: string[]; items_checked?: CheckedItem[]; category?: string }
+interface Evidence { criterion: 'sharpness_pixels' | 'perspective' | 'lighting' | 'context'; finding: 'anomaly' | 'consistent' | 'cannot_tell'; confidence: number; area: string; observation: string; weight: number; points: number }
+interface Verdict { score: number; reason: string; suspect_areas?: string[]; evidence?: Evidence[]; signals?: string[]; needs_checking?: string[]; items_checked?: CheckedItem[]; category?: string }
 
 const SPAM_KIND: Record<string, string> = {
   loan_offer: 'Loan or cash offer', gambling: 'Gambling', engagement_services: 'Followers or likes for sale',
@@ -293,6 +294,7 @@ function ResultCard({ r }: { r: Result }) {
             </div>
             <div className="meter"><i style={{ width: `${v.score}%`, background: tone(v.score) }} /></div>
             {v.reason && <div className="img-check-why">{v.reason}</div>}
+            {!!v.evidence?.length && <EvidenceTable rows={v.evidence} score={v.score} />}
             {!!v.suspect_areas?.length && (
               <ul className="img-check-areas">{v.suspect_areas.map((a, i) => <li key={i}>{a}</li>)}</ul>
             )}
@@ -338,6 +340,39 @@ function ResultCard({ r }: { r: Result }) {
         </details>
       )}
       <div className="sub" style={{ marginTop: 12 }}>Scores run 0–100. A check is flagged from {FLAG_AT} up; the threshold is a placeholder until it is calibrated on real pictures.</div>
+    </>
+  );
+}
+
+const CRITERION: Record<Evidence['criterion'], string> = {
+  sharpness_pixels: 'Sharpness, pixels and font',
+  perspective: 'Perspective',
+  lighting: 'Lighting and colour',
+  context: 'Contradiction with the rest of the image',
+};
+const FINDING: Record<Evidence['finding'], { label: string; color: string }> = {
+  anomaly: { label: 'Anomaly', color: T.sig },
+  consistent: { label: 'Consistent', color: 'var(--grow)' },
+  cannot_tell: { label: 'Cannot tell', color: 'var(--ink-3)' },
+};
+
+/** How the tampering probability is built: each criterion's weight, what was found, and the points it adds. */
+function EvidenceTable({ rows, score }: { rows: Evidence[]; score: number }) {
+  return (
+    <>
+      <div className="img-check-sub">How the {score}% is built — weight × confidence, anomalies only, capped at 99</div>
+      <table className="img-items">
+        <tbody>
+          {rows.map((e) => (
+            <tr key={e.criterion}>
+              <td style={{ whiteSpace: 'nowrap' }}><b>{CRITERION[e.criterion]}</b><div className="sub">weight {e.weight}%</div></td>
+              <td style={{ whiteSpace: 'nowrap', color: FINDING[e.finding].color }}><b>{FINDING[e.finding].label}</b><div className="sub">{e.confidence}% sure</div></td>
+              <td className="n"><b>+{e.points}</b></td>
+              <td>{e.observation}{e.area && <div className="sub">{e.area}</div>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </>
   );
 }
