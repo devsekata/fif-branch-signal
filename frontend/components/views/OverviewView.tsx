@@ -8,7 +8,7 @@ import { Masonry } from '@/components/Masonry';
 import { AiNote, ApiPage, Bridge, Chip, Chips, EmptyRow, Metric, NoText, PanelHead, Pending, Rating, SourceBadge, Stat, Tags } from '@/components/ui';
 import { useApi, type ApiResult } from '@/lib/api';
 import { useFilters, type Level } from '@/lib/filters';
-import { toAreas, toPoints } from '@/lib/geo';
+import { mapScoreOf, toAreas, toPoints, withMapScore } from '@/lib/geo';
 import { branchHref } from '@/lib/pages';
 import { useReference } from '@/lib/reference';
 import { praiseInScope, topicRows, type PraiseDrivers } from '@/lib/topics';
@@ -79,21 +79,23 @@ function Hero({ view, m, why }: { view: View; m: Mix; why?: { reason: string; n:
   const where = useWhere(view);
   const coverage = useReference().source('google');
   const cov = coverage?.universe ? ((100 * coverage.rows) / coverage.universe).toFixed(1) : null;
-  const verdict = m.score === null ? '' : m.score >= 70 ? 'Mostly positive' : m.score >= 55 ? 'Mixed, leaning positive' : m.score >= 45 ? 'Mixed' : 'Leaning negative';
+  /* The same score as the map: a neutral review counts against, so it runs from −100 to 100. */
+  const score = mapScoreOf(m);
+  const verdict = score === null ? '' : score >= 65 ? 'Mostly positive' : score >= 50 ? 'Mixed, leaning positive' : score >= 35 ? 'Mixed' : 'Leaning negative';
   return (
     <div className="hero glow">
       <div className="hero-eyebrow"><i className="live" />How customers are talking about FIF right now</div>
       <div className="lede">
         {all ? (
           <>
-            {m.score !== null && <><em style={{ color: m.score >= 55 ? 'var(--grow)' : 'var(--sig)' }}>{verdict}</em> {where} —{' '}</>}
+            {score !== null && <><em style={{ color: score >= 50 ? 'var(--grow)' : 'var(--sig)' }}>{verdict}</em> {where} —{' '}</>}
             {share(m.good, all)}% positive, {share(m.neutral, all)}% neutral, {share(m.bad, all)}% negative, {share(m.irrelevant, all)}% irrelevant/spam{' '}
             across {all.toLocaleString('id-ID')} reviews and comments read.
           </>
         ) : 'Nothing read in this view.'}
       </div>
       <div className="stat-rail tiles">
-        <Stat k="Sentiment score" v={m.score ?? '—'} n="(positive − negative) ÷ total, irrelevant/spam left out" bad={m.score !== null && m.score < 55} />
+        <Stat k="Sentiment score" v={score ?? '—'} n="(positive − (negative + neutral)) ÷ (positive + negative + neutral) × 100, irrelevant/spam left out" bad={score !== null && score < 50} />
         <Stat k="Inbound Message" v={all.toLocaleString('id-ID')} n={cov && view.useG ? `${cov}% of all Google reviews` : 'reviews and comments'} />
         <Stat k="Irrelevant/spam" v={share(m.irrelevant, all) + '%'} n={reasons || `${m.irrelevant.toLocaleString('id-ID')} set aside by the relevance check`} />
         <Stat k="Negative share" v={share(m.bad, all) + '%'} n={`${m.bad.toLocaleString('id-ID')} reviews and comments`} bad={share(m.bad, all) > 15} />
@@ -253,7 +255,7 @@ function BestWorst({ view, res }: { view: View; res: ApiResult<SignalBranchesRes
     const items = level === 'branch'
       ? toPoints(res.data).filter((p) => p.enough).map((p) => ({ key: p.place.id, name: p.place.name, mix: p.mix }))
       : toAreas(res.data, level).filter((a) => a.enough).map((a) => ({ key: a.name, name: a.name, mix: a.mix }));
-    return items.sort((x, y) => y.mix.score! - x.mix.score!);
+    return items.map(withMapScore).sort((x, y) => y.mix.score! - x.mix.score!);
   }, [res.data, level]);
 
   /* With three provinces a strict best-3 / worst-3 split silently drops the middle one.
@@ -346,7 +348,7 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
             { ...bar, label: 'Neutral', data: months.map((m) => m.neutral), backgroundColor: NEUTRAL },
             { ...bar, label: 'Negative', data: months.map((m) => m.bad), backgroundColor: T.sig },
             { ...bar, label: 'Irrelevant/spam', data: months.map((m) => m.irrelevant), backgroundColor: IRRELEVANT },
-            { type: 'line', label: 'Sentiment score', yAxisID: 'y1', data: months.map((m) => m.score),
+            { type: 'line', label: 'Sentiment score', yAxisID: 'y1', data: months.map(mapScoreOf),
               borderColor: T.ink, borderWidth: 1.6, tension: 0.35, pointRadius: 0, pointHoverRadius: 4, spanGaps: true },
           ],
         },
@@ -354,7 +356,7 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
           responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend },
           scales: {
             x: { ...NOGRID, stacked: true }, y: { ...AXIS, stacked: true, beginAtZero: true },
-            y1: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { padding: 6 } },
+            y1: { position: 'right', suggestedMin: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { padding: 6 } },
           },
         },
       };
@@ -384,7 +386,7 @@ function Trend({ view, months }: { view: View; months: Sig['monthly'] }) {
   // direction of travel
   const scored = months.filter((m) => m.total >= MIN_N);
   const half = Math.ceil(scored.length / 2);
-  const avg = (arr: typeof scored) => arr.reduce((a, x) => a + x.score!, 0) / arr.length;
+  const avg = (arr: typeof scored) => arr.reduce((a, x) => a + (mapScoreOf(x) ?? 0), 0) / arr.length;
   const delta = scored.length >= 2 ? Math.round((avg(scored.slice(-half)) - avg(scored.slice(0, half))) * 10) / 10 : 0;
   const dir = delta > 1.5 ? 'improving' : delta < -1.5 ? 'sliding' : 'flat';
   return (
